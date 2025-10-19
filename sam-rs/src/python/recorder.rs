@@ -6,7 +6,6 @@ use pyo3::{
     types::{PyAnyMethods, PyTuple},
     Bound, PyAny, PyResult, Python,
 };
-use regex::Regex;
 
 use super::update_tensor::update_tensor;
 
@@ -42,32 +41,98 @@ pub fn load_module_from_python<B: Backend>(
     })
 }
 
-fn key_replacer(key: String) -> String {
+fn key_replacer(mut key: String) -> String {
     // Replacing "neck.1.", "output_upscaling.1.", "mask_downscaling.1." with neck1.
-    let re = Regex::new(r"(neck|output_upscaling|mask_downscaling)\.(\d+)\.").unwrap();
-    let key = re.replace_all(&key, "$1$2.").to_string();
-
-    // Replacing all norm1.weight, norm2.weight with norm1.gamma, norm2.gamma
-    let re = Regex::new(r"norm(\d+)\.weight").unwrap();
-    let key = re.replace_all(&key, "norm$1.gamma").to_string();
-
-    // Replacing all norm1.bias with norm1.beta
-    let re = Regex::new(r"norm(\d+)\.bias").unwrap();
-    let key = re.replace_all(&key, "norm$1.beta").to_string();
+    for prefix in ["neck", "output_upscaling", "mask_downscaling"] {
+        let pattern = format!("{}.", prefix);
+        if let Some(pos) = key.find(&pattern) {
+            let after_prefix = pos + pattern.len();
+            if after_prefix < key.len() {
+                // Find the digit(s) after the prefix
+                let rest = &key[after_prefix..];
+                if let Some(digit_end) = rest.find(|c: char| !c.is_ascii_digit()) {
+                    if digit_end > 0 && rest.chars().nth(digit_end) == Some('.') {
+                        // Extract the digit(s)
+                        let digits = &rest[..digit_end];
+                        // Reconstruct: prefix + digits + rest after the dot
+                        key = format!(
+                            "{}{}.{}",
+                            &key[..pos + prefix.len()],
+                            digits,
+                            &rest[digit_end + 1..]
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     // Replacing all norm_final_attn.weight with norm_final_attn.gamma
-    let re = Regex::new(r"norm_final_attn\.weight").unwrap();
-    let key = re.replace_all(&key, "norm_final_attn.gamma").to_string();
+    key = key.replace("norm_final_attn.weight", "norm_final_attn.gamma");
 
     // Replacing all norm_final_attn.bias with norm_final_attn.beta
-    let re = Regex::new(r"norm_final_attn\.bias").unwrap();
-    let key = re.replace_all(&key, "norm_final_attn.beta").to_string();
+    key = key.replace("norm_final_attn.bias", "norm_final_attn.beta");
+
+    // Replacing all norm1.weight, norm2.weight with norm1.gamma, norm2.gamma
+    // Look for "norm" followed by digits and ".weight"
+    if let Some(norm_pos) = key.find("norm") {
+        let after_norm = norm_pos + 4;
+        if after_norm < key.len() {
+            let rest = &key[after_norm..];
+            if let Some(first_char) = rest.chars().next() {
+                if first_char.is_ascii_digit() {
+                    // Find where digits end
+                    if let Some(digit_end) = rest.find(|c: char| !c.is_ascii_digit()) {
+                        if rest[digit_end..].starts_with(".weight") {
+                            let before_weight = after_norm + digit_end;
+                            key = format!(
+                                "{}.gamma{}",
+                                &key[..before_weight],
+                                &key[before_weight + 7..]
+                            );
+                        } else if rest[digit_end..].starts_with(".bias") {
+                            let before_bias = after_norm + digit_end;
+                            key =
+                                format!("{}.beta{}", &key[..before_bias], &key[before_bias + 5..]);
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // Replacing all .1. with [1].
-    let re = Regex::new(r"\.(\d+)\.").unwrap();
-    let key = re.replace_all(&key, "[$1].").to_string();
+    let mut result = String::new();
+    let chars: Vec<char> = key.chars().collect();
+    let mut i = 0;
 
-    key
+    while i < chars.len() {
+        if chars[i] == '.' && i + 2 < chars.len() {
+            // Look ahead to see if we have .digit(s).
+            let mut j = i + 1;
+            while j < chars.len() && chars[j].is_ascii_digit() {
+                j += 1;
+            }
+
+            // If we found digits followed by a dot
+            if j > i + 1 && j < chars.len() && chars[j] == '.' {
+                // Extract the digits
+                result.push('[');
+                for k in (i + 1)..j {
+                    result.push(chars[k]);
+                }
+                result.push(']');
+                result.push('.');
+                i = j + 1;
+                continue;
+            }
+        }
+
+        result.push(chars[i]);
+        i += 1;
+    }
+
+    result
 }
 pub fn get_python_map<'a>(sam: Bound<'a, PyAny>) -> PyResult<HashMap<String, Bound<'a, PyAny>>> {
     let mut map = HashMap::new();
@@ -100,4 +165,58 @@ pub fn load_sam<B: Backend>(mut sam: Sam<B>, values: HashMap<String, Bound<PyAny
     // let record = sam.clone().into_record();
     // sam.load_record(record)
     sam
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_key_replacer() {
+        // Test replacing neck.1. with neck1.
+        assert_eq!(key_replacer("neck.1.layer".to_string()), "neck1.layer");
+        assert_eq!(
+            key_replacer("output_upscaling.2.weight".to_string()),
+            "output_upscaling2.weight"
+        );
+        assert_eq!(
+            key_replacer("mask_downscaling.10.bias".to_string()),
+            "mask_downscaling10.bias"
+        );
+
+        // Test replacing norm_final_attn.weight with norm_final_attn.gamma
+        assert_eq!(
+            key_replacer("norm_final_attn.weight".to_string()),
+            "norm_final_attn.gamma"
+        );
+        assert_eq!(
+            key_replacer("norm_final_attn.bias".to_string()),
+            "norm_final_attn.beta"
+        );
+
+        // Test replacing norm1.weight with norm1.gamma
+        assert_eq!(key_replacer("norm1.weight".to_string()), "norm1.gamma");
+        assert_eq!(key_replacer("norm2.bias".to_string()), "norm2.beta");
+        assert_eq!(key_replacer("norm10.weight".to_string()), "norm10.gamma");
+
+        // Test replacing .1. with [1].
+        assert_eq!(
+            key_replacer("layer.1.weight".to_string()),
+            "layer[1].weight"
+        );
+        assert_eq!(
+            key_replacer("blocks.0.attn.1.proj".to_string()),
+            "blocks[0].attn[1].proj"
+        );
+        assert_eq!(
+            key_replacer("encoder.12.layer".to_string()),
+            "encoder[12].layer"
+        );
+
+        // Test combinations
+        assert_eq!(
+            key_replacer("neck.1.layer.2.norm1.weight".to_string()),
+            "neck1.layer[2].norm1.gamma"
+        );
+    }
 }
