@@ -33,6 +33,9 @@
             pkgs.python312Packages.opencv4
             pkgs.python312Packages.numpy
             pkgs.python312Packages.dpath
+            pkgs.python312Packages.matplotlib
+            pkgs.python312Packages.pillow
+            pkgs.python312Packages.timm
           ];
 
           LIBCLANG_PATH = "${pkgs.clang.cc.lib}/lib";
@@ -52,11 +55,17 @@
             echo "LIBCLANG_PATH: $LIBCLANG_PATH"
             echo "LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
             
-            # Make segment-anything available for import
-            export PYTHONPATH="$PWD/segment-anything:$PYTHONPATH"
+            # Make segment-anything and mobile-sam available for import
+            export PYTHONPATH="$PWD/segment-anything:$PWD/mobile-sam:$PYTHONPATH"
             
+            echo "Python packages:"
+            echo "  - PyTorch: $(python -c 'import torch; print(torch.__version__)')"
+            echo "  - timm: $(python -c 'import timm; print(timm.__version__)' 2>/dev/null || echo 'available')"
+            echo "  - matplotlib: available"
             echo "===================================="
             echo "Ready to develop! 🦀"
+            echo ""
+            echo "Test MobileSAM: python test_mobile_sam.py"
           '';
         };
 
