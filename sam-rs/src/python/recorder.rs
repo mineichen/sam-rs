@@ -28,7 +28,7 @@ pub fn load_module_from_python<B: Backend>(
         // Saves the module to pth, in test version.
         // if version == SamVersion::Test {
         //     py.import("torch")?
-        //         .call_method1("save", (python_sam, format!("{file}.pth")))?;
+        //         .call_method1("save", (python_sam, format!("{file}")))?;
         // }
 
         let map = get_python_map(python_sam).unwrap();

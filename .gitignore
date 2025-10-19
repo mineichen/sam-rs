@@ -2,5 +2,6 @@ target/
 *.onnx
 .venv/
 *.pth
+*.pt
 __pycache__/
 *.gz

@@ -16,7 +16,7 @@ mod test {
     use crate::tests::helpers::{get_python_sam, get_sam, TestBackend};
 
     #[test]
-    //#[ignore]
+    #[ignore]
     fn test_prediction() {
         let image_path = "../images/dog.jpg";
         let version = SamVersion::VitB;

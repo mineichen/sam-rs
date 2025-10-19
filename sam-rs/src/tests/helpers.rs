@@ -49,7 +49,7 @@ pub fn get_python_sam<'a>(
 
     match checkpoint {
         Some(checkpoint) => {
-            let name = format!("{}.pth", checkpoint.display());
+            let name = checkpoint.display().to_string();
             module = module.call1((name,))?;
         }
         None => module = module.call0()?,
