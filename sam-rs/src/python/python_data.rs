@@ -10,6 +10,13 @@ use crate::{
 pub trait PythonDataKind: std::fmt::Debug + PartialEq + Clone + Element + Sized + Copy {}
 impl PythonDataKind for f32 {}
 impl PythonDataKind for i64 {}
+/// Set PyTorch random seed for deterministic tests
+pub fn set_seed(py: Python<'_>, seed: i64) -> PyResult<()> {
+    let torch = py.import("torch")?;
+    torch.call_method1("manual_seed", (seed,))?;
+    Ok(())
+}
+
 pub fn random_python_tensor<'py, const D: usize>(
     py: Python<'py>,
     shape: [usize; D],

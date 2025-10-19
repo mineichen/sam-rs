@@ -63,20 +63,21 @@ impl<B: Backend> Conv2dBN<B> {
 mod tests {
     use super::*;
     use crate::{
-        python::{
-            module_to_file::module_to_file,
-            python_data::{random_python_tensor, PythonData},
-        },
+        modeling::image_encoder::tiny_vit::test_helpers::save_module_with_bn_fix,
+        python::python_data::{random_python_tensor, PythonData},
         tests::helpers::{load_module, TestBackend, TEST_ALMOST_THRESHOLD},
     };
     use pyo3::{types::PyAnyMethods, PyResult, Python};
 
     #[test]
     fn test_conv2d_bn_basic() {
-        const FILE: &str = "conv2d_bn_basic";
+        const FILE: &str = "tiny_vit_conv2d_bn_basic";
 
         fn python() -> PyResult<(PythonData<4>, PythonData<4>)> {
             Python::attach(|py| {
+                use crate::python::python_data::set_seed;
+                set_seed(py, 42)?;
+
                 // Create Conv2d_BN structure that matches Rust's field names
                 let torch_nn = py.import("torch.nn")?;
 
@@ -96,31 +97,8 @@ mod tests {
                 let module_dict = torch_nn.getattr("ModuleDict")?.call0()?;
                 module_dict.call_method1("__setitem__", ("c", conv))?;
                 module_dict.call_method1("__setitem__", ("bn", bn))?;
-                module_dict.call_method0("eval")?; // Set to eval mode
 
-                // Save to file, then fix BatchNorm parameter names (weight→gamma, bias→beta)
-                module_to_file(FILE, py, &module_dict)?;
-
-                // Rename BatchNorm parameters to match Burn's naming convention
-                let code = format!(
-                    r#"
-import json
-import os
-path = os.path.expanduser('~/Documents/sam-models/{}.json')
-with open(path, 'r') as f:
-    data = json.load(f)
-# Rename bn.weight to bn.gamma and bn.bias to bn.beta
-if 'bn' in data['item']:
-    if 'weight' in data['item']['bn']:
-        data['item']['bn']['gamma'] = data['item']['bn'].pop('weight')
-    if 'bias' in data['item']['bn']:
-        data['item']['bn']['beta'] = data['item']['bn'].pop('bias')
-with open(path, 'w') as f:
-    json.dump(data, f)
-"#,
-                    FILE
-                );
-                py.run(&std::ffi::CString::new(code).unwrap(), None, None)?;
+                save_module_with_bn_fix(py, FILE, &module_dict, &[""])?;
 
                 // Create input: [1, 3, 8, 8]
                 let input = random_python_tensor(py, [1, 3, 8, 8])?;
@@ -166,10 +144,13 @@ with open(path, 'w') as f:
 
     #[test]
     fn test_conv2d_bn_depthwise() {
-        const FILE: &str = "conv2d_bn_depthwise";
+        const FILE: &str = "tiny_vit_conv2d_bn_depthwise";
 
         fn python() -> PyResult<(PythonData<4>, PythonData<4>)> {
             Python::attach(|py| {
+                use crate::python::python_data::set_seed;
+                set_seed(py, 42)?;
+
                 // Create depthwise convolution (groups=channels)
                 let torch_nn = py.import("torch.nn")?;
 
@@ -190,29 +171,8 @@ with open(path, 'w') as f:
                 let module_dict = torch_nn.getattr("ModuleDict")?.call0()?;
                 module_dict.call_method1("__setitem__", ("c", conv))?;
                 module_dict.call_method1("__setitem__", ("bn", bn))?;
-                module_dict.call_method0("eval")?;
 
-                module_to_file(FILE, py, &module_dict)?;
-
-                // Rename BatchNorm parameters
-                let code = format!(
-                    r#"
-import json
-import os
-path = os.path.expanduser('~/Documents/sam-models/{}.json')
-with open(path, 'r') as f:
-    data = json.load(f)
-if 'bn' in data['item']:
-    if 'weight' in data['item']['bn']:
-        data['item']['bn']['gamma'] = data['item']['bn'].pop('weight')
-    if 'bias' in data['item']['bn']:
-        data['item']['bn']['beta'] = data['item']['bn'].pop('bias')
-with open(path, 'w') as f:
-    json.dump(data, f)
-"#,
-                    FILE
-                );
-                py.run(&std::ffi::CString::new(code).unwrap(), None, None)?;
+                save_module_with_bn_fix(py, FILE, &module_dict, &[""])?;
 
                 let input = random_python_tensor(py, [1, 32, 8, 8])?;
 
@@ -253,10 +213,13 @@ with open(path, 'w') as f:
 
     #[test]
     fn test_conv2d_bn_1x1() {
-        const FILE: &str = "conv2d_bn_1x1";
+        const FILE: &str = "tiny_vit_conv2d_bn_1x1";
 
         fn python() -> PyResult<(PythonData<4>, PythonData<4>)> {
             Python::attach(|py| {
+                use crate::python::python_data::set_seed;
+                set_seed(py, 42)?;
+
                 // Test 1x1 convolution (point-wise, common in TinyViT)
                 let torch_nn = py.import("torch.nn")?;
 
@@ -274,29 +237,8 @@ with open(path, 'w') as f:
                 let module_dict = torch_nn.getattr("ModuleDict")?.call0()?;
                 module_dict.call_method1("__setitem__", ("c", conv))?;
                 module_dict.call_method1("__setitem__", ("bn", bn))?;
-                module_dict.call_method0("eval")?;
 
-                module_to_file(FILE, py, &module_dict)?;
-
-                // Rename BatchNorm parameters
-                let code = format!(
-                    r#"
-import json
-import os
-path = os.path.expanduser('~/Documents/sam-models/{}.json')
-with open(path, 'r') as f:
-    data = json.load(f)
-if 'bn' in data['item']:
-    if 'weight' in data['item']['bn']:
-        data['item']['bn']['gamma'] = data['item']['bn'].pop('weight')
-    if 'bias' in data['item']['bn']:
-        data['item']['bn']['beta'] = data['item']['bn'].pop('bias')
-with open(path, 'w') as f:
-    json.dump(data, f)
-"#,
-                    FILE
-                );
-                py.run(&std::ffi::CString::new(code).unwrap(), None, None)?;
+                save_module_with_bn_fix(py, FILE, &module_dict, &[""])?;
 
                 let input = random_python_tensor(py, [2, 64, 16, 16])?;
 
