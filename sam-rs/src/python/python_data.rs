@@ -1,4 +1,6 @@
 use burn::tensor::{backend::Backend, BasicOps, Element, ElementConversion, Tensor, TensorKind};
+use pyo3::types::PyAnyMethods;
+use pyo3::Bound;
 use pyo3::{types::PyTuple, FromPyObject, PyAny, PyErr, PyResult, Python};
 
 use crate::{
@@ -8,12 +10,19 @@ use crate::{
 pub trait PythonDataKind: std::fmt::Debug + PartialEq + Clone + Element + Sized + Copy {}
 impl PythonDataKind for f32 {}
 impl PythonDataKind for i64 {}
-pub fn random_python_tensor<const D: usize>(py: Python, shape: [usize; D]) -> PyResult<&PyAny> {
+pub fn random_python_tensor<'py, const D: usize>(
+    py: Python<'py>,
+    shape: [usize; D],
+) -> PyResult<pyo3::Bound<'py, PyAny>> {
     let torch = py.import("torch")?;
-    let input = torch.call_method1("randn", (shape,))?;
-    Ok(input)
+    let shape_tuple = pyo3::types::PyTuple::new(py, shape)?;
+    let input = torch.call_method1("randn", (shape_tuple,))?;
+    Ok(input.into_any())
 }
-pub fn random_python_tensor_int<const D: usize>(py: Python, shape: [usize; D]) -> PyResult<&PyAny> {
+pub fn random_python_tensor_int<'py, const D: usize>(
+    py: Python<'py>,
+    shape: [usize; D],
+) -> PyResult<pyo3::Bound<'py, PyAny>> {
     let tensor = random_python_tensor(py, shape)?;
     let int = py.import("torch")?.getattr("int")?;
     let tensor = tensor.call_method1("type", (int,))?;
@@ -62,8 +71,8 @@ impl<const D: usize, T: PythonDataKind> PythonData<D, T> {
         let mut failed = 0;
         let mut max_diff: f32 = 0.0;
         for (a, b) in self.slice.iter().zip(other.slice.iter()) {
-            let a = a.to_f32().unwrap();
-            let b = b.to_f32().unwrap();
+            let a = a.to_f32();
+            let b = b.to_f32();
             if a == b {
                 exact += 1;
                 continue;
@@ -93,12 +102,12 @@ impl<const D: usize, T: PythonDataKind> PythonData<D, T> {
     }
 }
 
-impl<'a, const D: usize, T: PythonDataKind> TryFrom<&'a PyAny> for PythonData<D, T>
+impl<'py, const D: usize, T: PythonDataKind> TryFrom<pyo3::Bound<'py, PyAny>> for PythonData<D, T>
 where
-    Vec<T>: FromPyObject<'a>,
+    Vec<T>: FromPyObject<'py>,
 {
     type Error = PyErr;
-    fn try_from(data: &'a PyAny) -> PyResult<Self> {
+    fn try_from(data: pyo3::Bound<'py, PyAny>) -> PyResult<Self> {
         let slice = data
             .getattr("flatten")?
             .call0()?
@@ -113,7 +122,7 @@ where
 }
 
 pub fn pyany_to_tensor<'a, B: Backend, const D: usize, K: TensorKind<B> + BasicOps<B>>(
-    data: &'a PyAny,
+    data: Bound<'a, PyAny>,
 ) -> Tensor<B, D, K>
 where
     <K as BasicOps<B>>::Elem: ElementConversion,
@@ -131,7 +140,8 @@ where
     fn from(data: PythonData<D, T>) -> Self {
         let slice = data.slice;
         let shape = data.shape;
-        Tensor::of_slice(slice, shape)
+        let device = B::Device::default();
+        Tensor::of_slice(slice, shape, &device)
     }
 }
 
@@ -146,9 +156,9 @@ where
     }
 }
 
-impl TryFrom<&PyAny> for Size {
+impl<'py> TryFrom<pyo3::Bound<'py, PyAny>> for Size {
     type Error = PyErr;
-    fn try_from(data: &PyAny) -> PyResult<Self> {
+    fn try_from(data: pyo3::Bound<'py, PyAny>) -> PyResult<Self> {
         let tuple = data.downcast::<PyTuple>()?;
         Ok(Size(
             tuple.get_item(0)?.extract()?,

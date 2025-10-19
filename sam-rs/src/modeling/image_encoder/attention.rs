@@ -1,7 +1,7 @@
 use burn::{
     module::{Module, Param},
     nn::{Linear, LinearConfig},
-    tensor::{activation::softmax, backend::Backend, Tensor},
+    tensor::{activation::softmax, backend::Backend, ElementConversion, Tensor, TensorData},
 };
 
 use crate::{burn_helpers::TensorHelpers, sam_predictor::Size};
@@ -9,13 +9,13 @@ use crate::{burn_helpers::TensorHelpers, sam_predictor::Size};
 ///Multi-head Attention block with relative position embeddings.
 #[derive(Debug, Module)]
 pub struct Attention<B: Backend> {
-    num_heads: usize,
-    scale: f32,
+    pub num_heads: usize,
+    pub scale: f32,
     pub qkv: Linear<B>,
     pub proj: Linear<B>,
-    use_rel_pos: bool,
-    rel_pos_h: Option<Param<Tensor<B, 2>>>,
-    rel_pos_w: Option<Param<Tensor<B, 2>>>,
+    pub use_rel_pos: bool,
+    pub rel_pos_h: Option<Param<Tensor<B, 2>>>,
+    pub rel_pos_w: Option<Param<Tensor<B, 2>>>,
 }
 impl<B: Backend> Attention<B> {
     // Args:
@@ -33,6 +33,7 @@ impl<B: Backend> Attention<B> {
         use_rel_pos: Option<bool>,
         _rel_pos_zero_init: Option<bool>,
         input_size: Option<Size>,
+        device: &B::Device,
     ) -> Self {
         let num_heads = num_heads.unwrap_or(8);
         let qkv_bias = qkv_bias.unwrap_or(true);
@@ -41,8 +42,10 @@ impl<B: Backend> Attention<B> {
 
         let head_dim = dim / num_heads;
         let scale = (head_dim as f32).powf(-0.5);
-        let qkv = LinearConfig::new(dim, 3 * dim).with_bias(qkv_bias).init();
-        let proj = LinearConfig::new(dim, dim).init();
+        let qkv = LinearConfig::new(dim, 3 * dim)
+            .with_bias(qkv_bias)
+            .init(device);
+        let proj = LinearConfig::new(dim, dim).init(device);
         let mut rel_pos_h = None;
         let mut rel_pos_w = None;
         if use_rel_pos {
@@ -51,8 +54,14 @@ impl<B: Backend> Attention<B> {
                 "Input size must be provided if using relative positional encoding."
             );
             let Size(h, w) = input_size.unwrap();
-            rel_pos_h = Some(Param::from(Tensor::zeros([2 * h - 1, head_dim])));
-            rel_pos_w = Some(Param::from(Tensor::zeros([2 * w - 1, head_dim])));
+            rel_pos_h = Some(Param::from_tensor(Tensor::zeros(
+                [2 * h - 1, head_dim],
+                device,
+            )));
+            rel_pos_w = Some(Param::from_tensor(Tensor::zeros(
+                [2 * w - 1, head_dim],
+                device,
+            )));
         }
 
         Self {
@@ -74,10 +83,10 @@ impl<B: Backend> Attention<B> {
             .forward(x)
             .reshape_max([b, h * w, 3, self.num_heads, usize::MAX])
             .permute([2, 0, 3, 1, 4]);
-        let qkv = qkv
-            .reshape_max([3, b * self.num_heads, h * w, usize::MAX])
-            .unbind(0);
-        let (q, k, v) = (qkv[0].clone(), qkv[1].clone(), qkv[2].clone());
+        let qkv = qkv.reshape_max([3, b * self.num_heads, h * w, usize::MAX]);
+        let q = qkv.clone().narrow(0, 0, 1).squeeze::<3>(0);
+        let k = qkv.clone().narrow(0, 1, 1).squeeze::<3>(0);
+        let v = qkv.narrow(0, 2, 1).squeeze::<3>(0);
 
         let mut attn = (q.clone() * self.scale).matmul(k.transpose());
         if self.use_rel_pos {
@@ -131,11 +140,50 @@ fn add_decomposed_rel_pos<B: Backend>(
     let (b, dim) = (shape[0], shape[2]);
     let r_q = q.reshape([b, q_h, q_w, dim]);
 
-    let rel_h: Tensor<B, 4> = Tensor::einsum("bhwc,hkc->bhwk", r_q.clone(), rh);
-    let rel_w: Tensor<B, 4> = Tensor::einsum("bhwc,wkc->bhwk", r_q, rw);
-    let attn = attn.reshape([b, q_h, q_w, k_h, k_w])
-        + rel_h.unsqueeze().permute([1, 2, 3, 4, 0])
-        + rel_w.unsqueeze().permute([1, 2, 3, 0, 4]);
+    // Replace einsum "bhwc,hkc->bhwk" with equivalent operations
+    // For each query height hi, compute: r_q[:, hi, :, :] @ rh[hi, :, :].T
+    // r_q[:, hi, :, :] has shape [b, q_w, dim]
+    // rh[hi, :, :] has shape [k_h, dim], transposed to [dim, k_h]
+    // Result for each hi: [b, q_w, k_h]
+    let mut rel_h_slices: Vec<Tensor<B, 4>> = Vec::with_capacity(q_h);
+    for hi in 0..q_h {
+        let r_q_slice: Tensor<B, 3> = r_q.clone().narrow(1, hi, 1).squeeze::<3>(1); // [b, q_w, dim]
+        let rh_slice: Tensor<B, 2> = rh.clone().narrow(0, hi, 1).squeeze::<2>(0); // [k_h, dim]
+        let rh_slice_t: Tensor<B, 2> = rh_slice.transpose(); // [dim, k_h]
+                                                             // Broadcast rh_slice_t to match batch dimension: repeat for each batch
+        let rh_slice_broadcast = rh_slice_t.clone().unsqueeze().repeat_dim(0, b); // [b, dim, k_h]
+        let result: Tensor<B, 3> = r_q_slice.matmul(rh_slice_broadcast); // [b, q_w, k_h]
+                                                                         // Reshape to [b, 1, q_w, k_h] for concatenation along dimension 1
+        let result_reshaped: Tensor<B, 4> = result.reshape([b, 1, q_w, k_h]);
+        rel_h_slices.push(result_reshaped);
+    }
+    let rel_h: Tensor<B, 4> = Tensor::cat(rel_h_slices, 1); // [b, q_h, q_w, k_h]
+
+    // Replace einsum "bhwc,wkc->bhwk" with equivalent operations
+    // For each query width wi, compute: r_q[:, :, wi, :] @ rw[wi, :, :].T
+    // r_q[:, :, wi, :] has shape [b, q_h, dim]
+    // rw[wi, :, :] has shape [k_w, dim], transposed to [dim, k_w]
+    // Result for each wi: [b, q_h, k_w]
+    let mut rel_w_slices: Vec<Tensor<B, 4>> = Vec::with_capacity(q_w);
+    for wi in 0..q_w {
+        let r_q_slice: Tensor<B, 3> = r_q.clone().narrow(2, wi, 1).squeeze::<3>(2); // [b, q_h, dim]
+        let rw_slice: Tensor<B, 2> = rw.clone().narrow(0, wi, 1).squeeze::<2>(0); // [k_w, dim]
+        let rw_slice_t: Tensor<B, 2> = rw_slice.transpose(); // [dim, k_w]
+                                                             // Broadcast rw_slice_t to match batch dimension: repeat for each batch
+        let rw_slice_broadcast = rw_slice_t.clone().unsqueeze().repeat_dim(0, b); // [b, dim, k_w]
+        let result: Tensor<B, 3> = r_q_slice.matmul(rw_slice_broadcast); // [b, q_h, k_w]
+                                                                         // Reshape to [b, q_h, 1, k_w] for concatenation along dimension 2
+        let result_reshaped: Tensor<B, 4> = result.reshape([b, q_h, 1, k_w]);
+        rel_w_slices.push(result_reshaped);
+    }
+    let rel_w: Tensor<B, 4> = Tensor::cat(rel_w_slices, 2); // [b, q_h, q_w, k_w]
+
+    // rel_h: [b, q_h, q_w, k_h] -> reshape to [b, q_h, q_w, k_h, 1]
+    // rel_w: [b, q_h, q_w, k_w] -> reshape to [b, q_h, q_w, 1, k_w]
+    let rel_h_expanded: Tensor<B, 5> = rel_h.reshape([b, q_h, q_w, k_h, 1]);
+    let rel_w_expanded: Tensor<B, 5> = rel_w.reshape([b, q_h, q_w, 1, k_w]);
+
+    let attn = attn.reshape([b, q_h, q_w, k_h, k_w]) + rel_h_expanded + rel_w_expanded;
     attn.reshape([b, q_h * q_w, k_h * k_w])
 }
 
@@ -149,35 +197,110 @@ fn add_decomposed_rel_pos<B: Backend>(
 // Returns:
 // Extracted positional embeddings according to relative positions.
 fn get_rel_pos<B: Backend>(q_size: usize, k_size: usize, rel_pos: Tensor<B, 2>) -> Tensor<B, 3> {
+    let device = rel_pos.device();
+    let rel_pos_dims = rel_pos.dims();
     let max_rel_dist = 2 * q_size.max(k_size) - 1;
-    let mut rel_pos_resized = rel_pos;
 
-    let dim = rel_pos_resized.dims()[0];
-    if dim != max_rel_dist {
-        rel_pos_resized = rel_pos_resized
-            .reshape_max([1, dim, usize::MAX])
-            .permute([0, 2, 1])
-            .upsample_linear1d::<3>(&[max_rel_dist], false, None)
-            .reshape_max([usize::MAX, max_rel_dist])
-            .permute([1, 0]);
-    }
-    let q_coords = Tensor::arange(0..q_size)
-        .unsqueeze()
-        .mul_scalar((k_size as f32 / q_size as f32).max(1.0))
-        .permute([1, 0]);
-    let k_coords = Tensor::arange(0..k_size)
-        .unsqueeze()
+    // Interpolate rel_pos if needed (mimics F.interpolate with mode='linear', align_corners=False)
+    let rel_pos_resized = if rel_pos_dims[0] != max_rel_dist {
+        let old_size = rel_pos_dims[0];
+        let new_size = max_rel_dist;
+        let embedding_dim = rel_pos_dims[1];
+        let rel_pos_data = rel_pos.to_data();
+
+        // Interpolate each embedding dimension independently
+        // PyTorch: rel_pos.reshape(1, L, C).permute(0, 2, 1) -> interpolate -> reshape(-1, new_size).permute(1, 0)
+        let mut result = Vec::with_capacity(new_size * embedding_dim);
+
+        for j in 0..embedding_dim {
+            for i in 0..new_size {
+                // F.interpolate with align_corners=False: pos = (i + 0.5) * scale - 0.5
+                let scale = old_size as f32 / new_size as f32;
+                let pos = ((i as f32 + 0.5) * scale - 0.5).max(0.0);
+                let idx0 = pos.floor() as usize;
+                let idx1 = (idx0 + 1).min(old_size - 1);
+                let weight = pos - idx0 as f32;
+
+                let val0 =
+                    rel_pos_data.as_slice::<B::FloatElem>().unwrap()[idx0 * embedding_dim + j];
+                let val1 =
+                    rel_pos_data.as_slice::<B::FloatElem>().unwrap()[idx1 * embedding_dim + j];
+                let interp_val = val0.elem::<f32>() * (1.0 - weight) + val1.elem::<f32>() * weight;
+                result.push(B::FloatElem::from_elem(interp_val));
+            }
+        }
+
+        // Transpose from [embedding_dim, new_size] to [new_size, embedding_dim]
+        let mut transposed = Vec::with_capacity(new_size * embedding_dim);
+        for i in 0..new_size {
+            for j in 0..embedding_dim {
+                transposed.push(result[j * new_size + i]);
+            }
+        }
+
+        Tensor::from_data(
+            TensorData::new(transposed, [new_size, embedding_dim]),
+            &device,
+        )
+    } else {
+        rel_pos
+    };
+
+    // Calculate relative coordinates
+    // q_coords should be [test_add_decomposed_rel_posq_size, 1], k_coords should be [1, k_size]
+    let q_coords: Tensor<B, 2> = Tensor::arange(0..q_size as i64, &device)
+        .float()
+        .reshape([q_size, 1]) // [q_size] -> [q_size, 1]
+        .mul_scalar((k_size as f32 / q_size as f32).max(1.0));
+
+    let k_coords: Tensor<B, 2> = Tensor::arange(0..k_size as i64, &device)
+        .float()
+        .reshape([1, k_size]) // [k_size] -> [1, k_size]
         .mul_scalar((q_size as f32 / k_size as f32).max(1.0));
-    let relative_coords =
-        (q_coords - k_coords) + (k_size as f32 - 1.) * (q_size as f32 / k_size as f32).max(1.0);
-    let idk = rel_pos_resized.index_tch(vec![relative_coords]); // Todo 40 out of range
-    idk
+
+    // Manually broadcast to [q_size, k_size] before subtraction
+    let q_coords_broadcast = q_coords.repeat_dim(1, k_size); // [q_size, 1] -> [q_size, k_size]
+    let k_coords_broadcast = k_coords.repeat_dim(0, q_size); // [1, k_size] -> [q_size, k_size]
+
+    let relative_coords = (q_coords_broadcast - k_coords_broadcast)
+        + (k_size as f32 - 1.) * (q_size as f32 / k_size as f32).max(1.0);
+
+    // Manual gathering since advanced indexing is not available
+    let relative_coords_data = relative_coords.to_data();
+    let rel_pos_resized_data = rel_pos_resized.to_data();
+    let embedding_dim = rel_pos_resized.dims()[1];
+
+    let mut result = Vec::with_capacity(q_size * k_size * embedding_dim);
+    // Iterate in the correct order for shape [q_size, k_size, embedding_dim]
+    // The flattened index for [i, j, k] is: i * (k_size * embedding_dim) + j * embedding_dim + k
+    for i in 0..q_size {
+        for j in 0..k_size {
+            // Access element [i, j] from the 2D tensor
+            let coord_idx = i * k_size + j;
+            let idx = relative_coords_data.as_slice::<B::FloatElem>().unwrap()[coord_idx]
+                .elem::<f32>()
+                .round() as usize;
+            let idx = idx.min(max_rel_dist - 1);
+
+            // Gather all embedding dimensions for this [i, j] position
+            for k in 0..embedding_dim {
+                let val = rel_pos_resized_data.as_slice::<B::FloatElem>().unwrap()
+                    [idx * embedding_dim + k];
+                result.push(val);
+            }
+        }
+    }
+
+    Tensor::from_data(
+        TensorData::new(result, [q_size, k_size, embedding_dim]),
+        &device,
+    )
 }
 
 #[cfg(test)]
 pub mod test {
 
-    use pyo3::{PyResult, Python};
+    use pyo3::{types::PyAnyMethods, PyResult, Python};
 
     use crate::{
         python::module_to_file::module_to_file,
@@ -189,13 +312,13 @@ pub mod test {
     #[test]
     fn test_get_rel_pos() {
         fn python() -> PyResult<(PythonData<2>, PythonData<3>)> {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 let module = py
                     .import("segment_anything.modeling.image_encoder")?
                     .getattr("get_rel_pos")?;
 
                 let input = random_python_tensor(py, [127, 40])?;
-                let output = module.call1((32, 32, input))?;
+                let output = module.call1((32, 32, &input))?;
                 Ok((input.try_into()?, output.try_into()?))
             })
         }
@@ -213,7 +336,7 @@ pub mod test {
             PythonData<2>,
             PythonData<3>,
         )> {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 let module = py
                     .import("segment_anything.modeling.image_encoder")?
                     .getattr("add_decomposed_rel_pos")?;
@@ -222,7 +345,7 @@ pub mod test {
                 let q = random_python_tensor(py, [200, 49, 20])?;
                 let rel_pos_h = random_python_tensor(py, [20, 20])?;
                 let rel_pos_w = random_python_tensor(py, [20, 20])?;
-                let output = module.call1((attn, q, rel_pos_h, rel_pos_w, (7, 7), (7, 7)))?;
+                let output = module.call1((&attn, &q, &rel_pos_h, &rel_pos_w, (7, 7), (7, 7)))?;
                 Ok((
                     attn.try_into()?,
                     q.try_into()?,
@@ -251,19 +374,20 @@ pub mod test {
         const FILE: &str = "attention";
 
         fn python() -> PyResult<(PythonData<4>, PythonData<4>)> {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 let module = py
                     .import("segment_anything.modeling.image_encoder")?
                     .getattr("Attention")?;
                 let module = module.call1((320, 16, true, true, true, (14, 14)))?;
-                module_to_file(FILE, py, module).unwrap();
+                module_to_file(FILE, py, &module).unwrap();
 
                 let input = random_python_tensor(py, [25, 14, 14, 320])?;
-                let output = module.call1((input,))?;
+                let output = module.call1((&input,))?;
                 Ok((input.try_into()?, output.try_into()?))
             })
         }
         let (input, python) = python().unwrap();
+        let device = Default::default();
         let mut attention = super::Attention::<TestBackend>::new(
             320,
             Some(16),
@@ -271,6 +395,7 @@ pub mod test {
             Some(true),
             Some(true),
             Some(Size(14, 14)),
+            &device,
         );
         attention = load_module(FILE, attention);
 

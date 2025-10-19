@@ -1,15 +1,14 @@
 use crate::sam_predictor::Size;
 use burn::module::Module;
-use burn::nn::conv::Conv2d;
-use burn::nn::conv::Conv2dConfig;
-use burn::nn::conv::Conv2dPaddingConfig;
+use burn::nn::conv::{Conv2d, Conv2dConfig};
+use burn::nn::PaddingConfig2d;
 use burn::tensor::backend::Backend;
 use burn::tensor::Tensor;
 
 /// Image to Patch Embedding.
 #[derive(Debug, Module)]
 pub struct PatchEmbed<B: Backend> {
-    proj: Conv2d<B>,
+    pub proj: Conv2d<B>,
 }
 impl<B: Backend> PatchEmbed<B> {
     // Args:
@@ -24,6 +23,7 @@ impl<B: Backend> PatchEmbed<B> {
         padding: Option<Size>,
         in_chans: Option<usize>,
         embed_dim: Option<usize>,
+        device: &B::Device,
     ) -> Self {
         let kernel_size = kernel_size.unwrap_or(Size(16, 16));
         let stride = stride.unwrap_or(Size(16, 16));
@@ -32,8 +32,8 @@ impl<B: Backend> PatchEmbed<B> {
         let embed_dim = embed_dim.unwrap_or(768);
         let proj = Conv2dConfig::new([in_chans, embed_dim], [kernel_size.0, kernel_size.1])
             .with_stride([stride.0, stride.1])
-            .with_padding(Conv2dPaddingConfig::Explicit(padding.0, padding.1))
-            .init();
+            .with_padding(PaddingConfig2d::Explicit(padding.0, padding.1))
+            .init(device);
         Self { proj: proj.into() }
     }
     pub fn forward(&self, x: Tensor<B, 4>) -> Tensor<B, 4> {
@@ -45,6 +45,7 @@ impl<B: Backend> PatchEmbed<B> {
 #[cfg(test)]
 mod test {
 
+    use pyo3::types::PyAnyMethods;
     use pyo3::{PyResult, Python};
 
     use crate::{
@@ -60,7 +61,7 @@ mod test {
     fn test_patch_embed() {
         const FILE: &str = "patch_embed";
         fn python() -> PyResult<(PythonData<4>, PythonData<4>)> {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 let module = py
                     .import("segment_anything.modeling.image_encoder")?
                     .getattr("PatchEmbed")?;
@@ -68,17 +69,19 @@ mod test {
                 module_to_file(FILE, py, &module)?;
 
                 let input = random_python_tensor(py, [1, 3, 512, 512])?;
-                let output = module.call1((input,))?;
+                let output = module.call1((&input,))?;
                 Ok((input.try_into()?, output.try_into()?))
             })
         }
         let (input, python) = python().unwrap();
+        let device = Default::default();
         let mut patch_embed = PatchEmbed::<TestBackend>::new(
             Some(Size(16, 16)),
             Some(Size(16, 16)),
             Some(Size(0, 0)),
             Some(3),
             Some(320),
+            &device,
         );
         patch_embed = load_module(FILE, patch_embed);
 

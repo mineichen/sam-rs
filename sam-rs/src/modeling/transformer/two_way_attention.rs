@@ -10,15 +10,15 @@ use super::attention::Attention;
 
 #[derive(Debug, Module)]
 pub struct TwoWayAttentionBlock<B: Backend> {
-    self_attn: Attention<B>,
-    norm1: LayerNorm<B>,
-    norm2: LayerNorm<B>,
-    norm3: LayerNorm<B>,
-    norm4: LayerNorm<B>,
-    cross_attn_token_to_image: Attention<B>,
-    cross_attn_image_to_token: Attention<B>,
-    mlp: MLPBlock<B>,
-    skip_first_layer_pe: bool,
+    pub self_attn: Attention<B>,
+    pub norm1: LayerNorm<B>,
+    pub norm2: LayerNorm<B>,
+    pub norm3: LayerNorm<B>,
+    pub norm4: LayerNorm<B>,
+    pub cross_attn_token_to_image: Attention<B>,
+    pub cross_attn_image_to_token: Attention<B>,
+    pub mlp: MLPBlock<B>,
+    pub skip_first_layer_pe: bool,
 }
 impl<B: Backend> TwoWayAttentionBlock<B> {
     // A transformer block with four layers: (1) self-attention of sparse
@@ -39,22 +39,31 @@ impl<B: Backend> TwoWayAttentionBlock<B> {
         activation: Option<Activation>,
         attention_downsample_rate: Option<usize>,
         skip_first_layer_pe: Option<bool>,
+        device: &B::Device,
     ) -> Self {
         let mlp_dim = mlp_dim.unwrap_or(2048);
         let activation = activation.unwrap_or(Activation::ReLU);
         let attention_downsample_rate = attention_downsample_rate.unwrap_or(2);
         let skip_first_layer_pe = skip_first_layer_pe.unwrap_or(false);
 
-        let self_attn = Attention::new(embedding_dim, num_heads, None);
-        let norm1 = LayerNormConfig::new(embedding_dim).init();
-        let cross_attn_token_to_image =
-            Attention::new(embedding_dim, num_heads, Some(attention_downsample_rate));
-        let norm2 = LayerNormConfig::new(embedding_dim).init();
-        let mlp = MLPBlock::new(embedding_dim, mlp_dim, activation);
-        let norm3 = LayerNormConfig::new(embedding_dim).init();
-        let norm4 = LayerNormConfig::new(embedding_dim).init();
-        let cross_attn_image_to_token =
-            Attention::new(embedding_dim, num_heads, Some(attention_downsample_rate));
+        let self_attn = Attention::new(embedding_dim, num_heads, None, device);
+        let norm1 = LayerNormConfig::new(embedding_dim).init(device);
+        let cross_attn_token_to_image = Attention::new(
+            embedding_dim,
+            num_heads,
+            Some(attention_downsample_rate),
+            device,
+        );
+        let norm2 = LayerNormConfig::new(embedding_dim).init(device);
+        let mlp = MLPBlock::new(embedding_dim, mlp_dim, activation, device);
+        let norm3 = LayerNormConfig::new(embedding_dim).init(device);
+        let norm4 = LayerNormConfig::new(embedding_dim).init(device);
+        let cross_attn_image_to_token = Attention::new(
+            embedding_dim,
+            num_heads,
+            Some(attention_downsample_rate),
+            device,
+        );
         Self {
             self_attn,
             norm1,
@@ -121,6 +130,7 @@ impl<B: Backend> TwoWayAttentionBlock<B> {
 
 #[cfg(test)]
 mod test {
+    use pyo3::types::PyAnyMethods;
     use pyo3::{types::PyTuple, PyResult, Python};
 
     use crate::{
@@ -143,7 +153,7 @@ mod test {
             PythonData<3>,
             PythonData<3>,
         )> {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 let relu = py.import("torch.nn")?.getattr("ReLU")?;
                 let module = py
                     .import("segment_anything.modeling.transformer")?
@@ -155,9 +165,8 @@ mod test {
                 let keys = random_python_tensor(py, [1, 256, 256])?;
                 let query_pe = random_python_tensor(py, [1, 256, 256])?;
                 let key_pe = random_python_tensor(py, [1, 256, 256])?;
-                let output = module
-                    .call1((queries, keys, query_pe, key_pe))?
-                    .downcast::<PyTuple>()?;
+                let output = module.call1((&queries, &keys, &query_pe, &key_pe))?;
+                let output = output.downcast::<PyTuple>()?;
                 let out_queries = output.get_item(0)?;
                 let out_keys = output.get_item(1)?;
                 Ok((
@@ -171,6 +180,7 @@ mod test {
             })
         }
         let (queries, keys, query_pe, key_pe, python1, python2) = python().unwrap();
+        let device = Default::default();
         let mut block = super::TwoWayAttentionBlock::<TestBackend>::new(
             256,
             8,
@@ -178,6 +188,7 @@ mod test {
             Some(Activation::ReLU),
             Some(2),
             Some(false),
+            &device,
         );
         block = load_module(FILE, block);
 

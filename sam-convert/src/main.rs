@@ -1,11 +1,11 @@
 use burn::{
     module::Module,
-    record::{BinGzFileRecorder, Recorder, FullPrecisionSettings},
+    record::{BinGzFileRecorder, FullPrecisionSettings, Recorder},
 };
 use sam_rs::{
     build_sam::SamVersion, python::recorder::load_module_from_python, tests::helpers::TestBackend,
 };
-use std::{env, time::Instant};
+use std::{env, path::Path, time::Instant};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -13,14 +13,14 @@ fn main() {
         panic!("Usage: sam-convert <type> <file>");
     }
     let version = args[1].as_str();
-    let file = args[2].as_str();
+    let file = Path::new(&args[2]);
 
     let version = SamVersion::from_str(version);
 
     let start = Instant::now();
 
-    let mut sam = version.build::<TestBackend>(None);
-    sam = load_module_from_python(sam, version, file).unwrap();
+    let sam = version.build::<TestBackend>(None, &Default::default());
+    let sam = load_module_from_python(sam, version, file).unwrap();
 
     println!("Saving module in rust...");
     let recorder = BinGzFileRecorder::<FullPrecisionSettings>::default();

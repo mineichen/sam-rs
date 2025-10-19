@@ -12,9 +12,9 @@ use super::common::activation::Activation;
 
 #[derive(Debug, Module)]
 pub struct TwoWayTransformer<B: Backend> {
-    layers: Vec<TwoWayAttentionBlock<B>>,
-    final_attn_token_to_image: Attention<B>,
-    norm_final_attn: LayerNorm<B>,
+    pub layers: Vec<TwoWayAttentionBlock<B>>,
+    pub final_attn_token_to_image: Attention<B>,
+    pub norm_final_attn: LayerNorm<B>,
 }
 impl<B: Backend> TwoWayTransformer<B> {
     // A transformer decoder that attends to an input image using
@@ -34,6 +34,7 @@ impl<B: Backend> TwoWayTransformer<B> {
         mlp_dim: usize,
         activation: Option<Activation>,
         attention_downsample_rate: Option<usize>,
+        device: &B::Device,
     ) -> Self {
         let activation = activation.unwrap_or(Activation::ReLU);
         let attention_downsample_rate = attention_downsample_rate.unwrap_or(2);
@@ -47,11 +48,16 @@ impl<B: Backend> TwoWayTransformer<B> {
                 Some(activation),
                 Some(attention_downsample_rate),
                 Some(i == 0),
+                device,
             ));
         }
-        let final_attn_token_to_image =
-            Attention::new(embedding_dim, num_heads, Some(attention_downsample_rate));
-        let norm_final_attn = LayerNormConfig::new(embedding_dim).init();
+        let final_attn_token_to_image = Attention::new(
+            embedding_dim,
+            num_heads,
+            Some(attention_downsample_rate),
+            device,
+        );
+        let norm_final_attn = LayerNormConfig::new(embedding_dim).init(device);
         Self {
             layers,
             final_attn_token_to_image,
@@ -103,6 +109,7 @@ impl<B: Backend> TwoWayTransformer<B> {
 
 #[cfg(test)]
 mod test {
+    use pyo3::types::PyAnyMethods;
     use pyo3::{PyResult, Python};
 
     use crate::{
@@ -123,7 +130,7 @@ mod test {
             PythonData<3>,
             PythonData<3>,
         )> {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 let relu = py.import("torch.nn")?.getattr("ReLU")?;
                 let module = py
                     .import("segment_anything.modeling.transformer")?
@@ -134,7 +141,11 @@ mod test {
                 let image_embedding = random_python_tensor(py, [1, 64, 16, 16])?;
                 let image_pe = random_python_tensor(py, [1, 64, 16, 16])?;
                 let point_embedding = random_python_tensor(py, [16, 256, 64])?;
-                let output = module.call1((image_embedding, image_pe, point_embedding))?;
+                let output = module.call1((
+                    image_embedding.clone(),
+                    image_pe.clone(),
+                    point_embedding.clone(),
+                ))?;
                 let queries = output.get_item(0)?;
                 let keys = output.get_item(1)?;
                 Ok((
@@ -147,6 +158,7 @@ mod test {
             })
         }
         let (image_embedding, image_pe, point_embedding, queries, keys) = python().unwrap();
+        let device = &Default::default();
         let mut transformer = super::TwoWayTransformer::<TestBackend>::new(
             2,
             64,
@@ -154,6 +166,7 @@ mod test {
             256,
             Some(Activation::ReLU),
             Some(2),
+            device,
         );
         transformer = load_module(FILE, transformer);
 

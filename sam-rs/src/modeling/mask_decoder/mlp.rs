@@ -7,9 +7,9 @@ use burn::{
 
 #[derive(Debug, Module)]
 pub struct MLP<B: Backend> {
-    layers: Vec<Linear<B>>,
-    num_layers: usize,
-    sigmoid_output: bool,
+    pub layers: Vec<Linear<B>>,
+    pub num_layers: usize,
+    pub sigmoid_output: bool,
 }
 
 impl<B: Backend> MLP<B> {
@@ -19,6 +19,7 @@ impl<B: Backend> MLP<B> {
         output_dim: usize,
         num_layers: usize,
         sigmoid_output: Option<bool>,
+        device: &B::Device,
     ) -> Self {
         let sigmoid_output = sigmoid_output.unwrap_or(false);
         let h = vec![hidden_dim; num_layers - 1];
@@ -27,7 +28,7 @@ impl<B: Backend> MLP<B> {
         let n_values = std::iter::once(input_dim).chain(h.clone());
         let k_values = h.into_iter().chain(std::iter::once(output_dim));
         for (n, k) in n_values.zip(k_values) {
-            layers.push(LinearConfig::new(n, k).init());
+            layers.push(LinearConfig::new(n, k).init(device));
         }
 
         Self {
@@ -56,7 +57,7 @@ impl<B: Backend> MLP<B> {
 #[cfg(test)]
 mod test {
 
-    use pyo3::{PyResult, Python};
+    use pyo3::{types::PyAnyMethods, PyResult, Python};
 
     use crate::{
         python::{
@@ -70,7 +71,7 @@ mod test {
     fn test_mlp() {
         const FILE: &str = "mlp";
         fn python() -> PyResult<(PythonData<2>, PythonData<2>)> {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 let module = py
                     .import("segment_anything.modeling.mask_decoder")?
                     .getattr("MLP")?;
@@ -78,12 +79,13 @@ mod test {
                 module_to_file(FILE, py, &module)?;
 
                 let input = random_python_tensor(py, [1, 256])?;
-                let output = module.call1((input,))?;
+                let output = module.call1((&input,))?;
                 Ok((input.try_into()?, output.try_into()?))
             })
         }
         let (input, python) = python().unwrap();
-        let mut mlp = super::MLP::<TestBackend>::new(256, 256, 256, 4, None);
+        let device = Default::default();
+        let mut mlp = super::MLP::<TestBackend>::new(256, 256, 256, 4, None, &device);
         mlp = load_module(FILE, mlp);
 
         // Forward

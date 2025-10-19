@@ -1,3 +1,9 @@
 [workspace]
+resolver = "2"
 
-members = ["sam-rs", "sam-example/src-tauri", "sam-convert"]
+members = ["sam-rs", "sam-convert"]
+
+[workspace.dependencies]
+burn = "0.18.0"
+burn-ndarray = "0.18.0"
+burn-wgpu = "0.18.0"

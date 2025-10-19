@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use burn::{
     module::Module,
     record::{BinGzFileRecorder, FullPrecisionSettings, Recorder},
@@ -21,15 +23,15 @@ pub enum SamVersion {
     Test,
 }
 impl SamVersion {
-    pub fn build<B: Backend>(&self, checkpoint: Option<&str>) -> Sam<B>
+    pub fn build<B: Backend>(&self, checkpoint: Option<&Path>, device: &B::Device) -> Sam<B>
     where
         <B as burn::tensor::backend::Backend>::FloatElem: From<f32>,
     {
         match self {
-            Self::VitH => build_sam_vit_h(checkpoint),
-            Self::VitL => build_sam_vit_l(checkpoint),
-            Self::VitB => build_sam_vit_b(checkpoint),
-            Self::Test => build_sam_test(checkpoint),
+            Self::VitH => build_sam_vit_h(checkpoint, device),
+            Self::VitL => build_sam_vit_l(checkpoint, device),
+            Self::VitB => build_sam_vit_b(checkpoint, device),
+            Self::Test => build_sam_test(checkpoint, device),
         }
     }
     pub fn to_str(&self) -> &'static str {
@@ -50,31 +52,31 @@ impl SamVersion {
         }
     }
 }
-pub fn build_sam_vit_h<B: Backend>(checkpoint: Option<&str>) -> Sam<B>
+pub fn build_sam_vit_h<B: Backend>(checkpoint: Option<&Path>, device: &B::Device) -> Sam<B>
 where
     <B as burn::tensor::backend::Backend>::FloatElem: From<f32>,
 {
-    _build_sam(1280, 32, 16, vec![7, 15, 23, 31], checkpoint)
+    _build_sam(1280, 32, 16, vec![7, 15, 23, 31], checkpoint, device)
 }
 
-pub fn build_sam_vit_l<B: Backend>(checkpoint: Option<&str>) -> Sam<B>
+pub fn build_sam_vit_l<B: Backend>(checkpoint: Option<&Path>, device: &B::Device) -> Sam<B>
 where
     <B as burn::tensor::backend::Backend>::FloatElem: From<f32>,
 {
-    _build_sam(1024, 24, 16, vec![5, 11, 17, 23], checkpoint)
+    _build_sam(1024, 24, 16, vec![5, 11, 17, 23], checkpoint, device)
 }
-pub fn build_sam_vit_b<B: Backend>(checkpoint: Option<&str>) -> Sam<B>
+pub fn build_sam_vit_b<B: Backend>(checkpoint: Option<&Path>, device: &B::Device) -> Sam<B>
 where
     <B as burn::tensor::backend::Backend>::FloatElem: From<f32>,
 {
-    _build_sam(768, 12, 12, vec![2, 5, 8, 11], checkpoint)
+    _build_sam(768, 12, 12, vec![2, 5, 8, 11], checkpoint, device)
 }
 
-pub fn build_sam_test<B: Backend>(checkpoint: Option<&str>) -> Sam<B>
+pub fn build_sam_test<B: Backend>(checkpoint: Option<&Path>, device: &B::Device) -> Sam<B>
 where
     <B as burn::tensor::backend::Backend>::FloatElem: From<f32>,
 {
-    _build_sam(8, 2, 2, vec![2, 5, 8, 11], checkpoint)
+    _build_sam(8, 2, 2, vec![2, 5, 8, 11], checkpoint, device)
 }
 
 fn _build_sam<B: Backend>(
@@ -82,7 +84,8 @@ fn _build_sam<B: Backend>(
     encoder_depth: usize,
     encoder_num_heads: usize,
     encoder_global_attn_indexes: Vec<usize>,
-    _checkpoint: Option<&str>,
+    checkpoint: Option<&Path>,
+    device: &B::Device,
 ) -> Sam<B>
 where
     <B as burn::tensor::backend::Backend>::FloatElem: From<f32>,
@@ -91,7 +94,7 @@ where
     let img_size = 1024;
     let vit_patch_size = 16;
     let image_embedding_size = img_size / vit_patch_size;
-    let mut sam = Sam::new(
+    let sam = Sam::new(
         ImageEncoderViT::new(
             Some(img_size),
             Some(vit_patch_size),
@@ -108,6 +111,7 @@ where
             None,
             Some(14),
             Some(encoder_global_attn_indexes),
+            device,
         ),
         PromptEncoder::new(
             prompt_embed_dim,
@@ -115,22 +119,25 @@ where
             Size(img_size, img_size),
             16,
             None,
+            device,
         ),
         MaskDecoder::new(
             prompt_embed_dim,
-            TwoWayTransformer::new(2, prompt_embed_dim, 8, 2048, None, None),
+            TwoWayTransformer::new(2, prompt_embed_dim, 8, 2048, None, None, device),
             Some(3),
             None,
             Some(3),
             Some(256),
+            device,
         ),
         Some([123.675, 116.28, 103.53]),
         Some([58.395, 57.12, 57.375]),
     );
-    if let Some(checkpoint) = _checkpoint {
+    if let Some(checkpoint) = checkpoint {
         let recorder = BinGzFileRecorder::<FullPrecisionSettings>::default();
-        let record = recorder.load(checkpoint.into()).unwrap();
-        sam = sam.load_record(record);
+        let record = recorder.load(checkpoint.into(), device).unwrap();
+        sam.load_record(record)
+    } else {
+        sam
     }
-    sam
 }

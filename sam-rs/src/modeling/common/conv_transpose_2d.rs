@@ -53,17 +53,22 @@ impl ConvTranspose2dConfig {
         self
     }
 
-    pub fn init<B: Backend>(&self) -> ConvTranspose2d<B> {
+    pub fn init<B: Backend>(&self, device: &B::Device) -> ConvTranspose2d<B> {
         ConvTranspose2d {
-            weight: Tensor::ones([
-                self.in_channels,
-                self.out_channels,
-                self.kernel_size[0],
-                self.kernel_size[1],
-            ])
-            .into(),
+            weight: Param::from_tensor(Tensor::ones(
+                [
+                    self.in_channels,
+                    self.out_channels,
+                    self.kernel_size[0],
+                    self.kernel_size[1],
+                ],
+                device,
+            )),
             bias: match self.bias {
-                true => Some(Tensor::ones([self.out_channels]).into()),
+                true => Some(Param::from_tensor(Tensor::ones(
+                    [self.out_channels],
+                    device,
+                ))),
                 false => None,
             },
             stride: self.stride,
@@ -77,8 +82,8 @@ impl ConvTranspose2dConfig {
 
 #[derive(Debug, Module)]
 pub struct ConvTranspose2d<B: Backend> {
-    weight: Param<Tensor<B, 4>>,
-    bias: Option<Param<Tensor<B, 1>>>,
+    pub weight: Param<Tensor<B, 4>>,
+    pub bias: Option<Param<Tensor<B, 1>>>,
     stride: [usize; 2],
     padding2: [usize; 2],
     padding_out: [usize; 2],
@@ -112,13 +117,10 @@ impl<B: Backend> ConvTranspose2d<B> {
 #[cfg(test)]
 mod test {
     use burn::tensor::Tensor;
-    use burn_tch::TchBackend;
-    use tch::nn::{ConvTransposeConfig, Init, Module};
-
-    use crate::burn_helpers::TensorHelpers;
+    use burn_ndarray::NdArray;
 
     use super::ConvTranspose2dConfig;
-    type Backend = TchBackend<f32>;
+    type Backend = NdArray<f32>;
 
     #[test]
     fn test_conv_transpose_2d() {
@@ -128,42 +130,19 @@ mod test {
         let k: usize = 2;
         let stride = 2;
 
-        let vs = tch::nn::VarStore::new(tch::Device::Cpu);
-        let tch_conv = tch::nn::conv_transpose2d(
-            &vs.root(),
-            i as i64,
-            o as i64,
-            k as i64,
-            ConvTransposeConfig {
-                stride: stride as i64,
-                bs_init: Init::Const(1.),
-                ws_init: Init::Const(1.),
-                ..Default::default()
-            },
-        );
+        let device = Default::default();
         let burn_conv = ConvTranspose2dConfig::new(i, o, [k, k])
             .set_stride([stride, stride])
-            .init::<Backend>();
+            .init::<Backend>(&device);
 
         let shape: [usize; 4] = [16, i, 16, 16];
 
-        let burn_input = Tensor::random(shape.clone(), burn::tensor::Distribution::Standard);
-        let (slice, _) = burn_input.to_slice::<f32>();
-        let tch_input = tch::Tensor::of_slice(&slice)
-            .reshape(&shape.iter().map(|x| *x as i64).collect::<Vec<_>>());
-
-        let tch_output = tch_conv.forward(&tch_input);
+        let burn_input =
+            Tensor::random(shape, burn::tensor::Distribution::Normal(0.0, 1.0), &device);
         let burn_output = burn_conv.forward(burn_input);
-        assert_eq!(
-            tch_output.size(),
-            burn_output
-                .dims()
-                .iter()
-                .map(|x| *x as i64)
-                .collect::<Vec<_>>()
-        );
-        // let tch_vec: Vec<f32> = tch_output.flatten(0, -1);
-        // let burn_vec: Vec<f32> = burn_output.to_data().value;
-        // assert_eq!(tch_vec, burn_vec)
+
+        // Check that output has correct shape
+        let expected_output_shape = [16, o, 32, 32]; // stride=2 doubles the size
+        assert_eq!(burn_output.dims(), expected_output_shape);
     }
 }

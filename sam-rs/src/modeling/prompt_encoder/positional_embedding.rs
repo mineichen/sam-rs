@@ -1,82 +1,106 @@
 use std::f32::consts::PI;
 
 use burn::{
-    module::Module,
-    tensor::{backend::Backend, Tensor},
+    module::{Module, Param},
+    tensor::{backend::Backend, ElementConversion, Tensor},
 };
 
-use crate::{burn_helpers::TensorHelpers, sam_predictor::Size};
+use crate::sam_predictor::Size;
 
 /// Positional encoding using random spatial frequencies.
-#[derive(Debug, Module, Clone)]
-pub struct PositionEmbeddingRandom {
-    num_pos_feats: usize,
-    scale: f32,
+#[derive(Debug, Module)]
+pub struct PositionEmbeddingRandom<B: Backend> {
+    // Store the positional encoding matrix as a learned parameter (loaded from checkpoint)
+    pub positional_encoding_gaussian_matrix: Param<Tensor<B, 2>>,
 }
 
-impl PositionEmbeddingRandom {
-    pub fn new(num_pos_feats: Option<usize>, scale: Option<f32>) -> Self {
+impl<B: Backend> PositionEmbeddingRandom<B> {
+    pub fn new(num_pos_feats: Option<usize>, scale: Option<f32>, device: &B::Device) -> Self {
         let num_pos_feats = num_pos_feats.unwrap_or(64);
         let mut scale = scale.unwrap_or(1.0);
 
         if scale <= 0.0 {
             scale = 1.0;
         }
+
+        // Generate the positional encoding matrix once during initialization
+        // Python uses torch.ones scaled, not random (despite the class name)
+        let positional_encoding_gaussian_matrix =
+            Param::from_tensor(Tensor::ones([2, num_pos_feats], device).mul_scalar(scale));
+
         Self {
-            num_pos_feats,
-            scale,
+            positional_encoding_gaussian_matrix,
         }
     }
-    fn positional_encoding_gaussian_matrix<B: Backend>(&self) -> Tensor<B, 2> {
-        #[cfg(test)]
-        return Tensor::ones([2, self.num_pos_feats]).mul_scalar(self.scale);
-        #[cfg(not(test))]
-        return Tensor::random(
-            [2, self.num_pos_feats],
-            burn::tensor::Distribution::Standard, // Todo might be wrong
-        )
-        .mul_scalar(self.scale);
-    }
     ///Positionally encode points that are normalized to [0,1].
-    fn _pe_encoding<B: Backend>(&self, coords: Tensor<B, 3>) -> Tensor<B, 3> {
+    fn _pe_encoding(&self, coords: Tensor<B, 3>) -> Tensor<B, 3> {
         let mut coords = coords.mul_scalar(2.0) - 1.0;
-        coords = coords.matmul(self.positional_encoding_gaussian_matrix().unsqueeze());
+        coords = coords.matmul(
+            self.positional_encoding_gaussian_matrix
+                .val()
+                .clone()
+                .unsqueeze(),
+        );
         coords = coords.mul_scalar(2.0 * PI);
         Tensor::cat(vec![coords.clone().sin(), coords.cos()], 2)
     }
 
     /// Generate positional encoding for a grid of the specified size.
-    pub fn forward<B: Backend>(&self, size: Size) -> Tensor<B, 3> {
+    pub fn forward(&self, size: Size) -> Tensor<B, 3> {
         let Size(h, w) = size;
-        let grid = Tensor::ones([h, w]);
-        let mut y_embed = grid.cumsum(0) - 0.5;
-        let mut x_embed = grid.cumsum(1) - 0.5;
+        let device = Default::default();
+
+        // Manual cumsum implementation for y_embed (cumsum along dim 0)
+        // Create a grid of ones and compute cumulative sum
+        let mut y_values = Vec::with_capacity(h * w);
+        for i in 0..h {
+            for _j in 0..w {
+                y_values.push(B::FloatElem::from_elem((i + 1) as f32 - 0.5));
+            }
+        }
+        let mut y_embed: Tensor<B, 2> =
+            Tensor::from_data(burn::tensor::TensorData::new(y_values, [h, w]), &device);
         y_embed = y_embed / h as f32;
+
+        // Manual cumsum implementation for x_embed (cumsum along dim 1)
+        let mut x_values = Vec::with_capacity(h * w);
+        for _i in 0..h {
+            for j in 0..w {
+                x_values.push(B::FloatElem::from_elem((j + 1) as f32 - 0.5));
+            }
+        }
+        let mut x_embed: Tensor<B, 2> =
+            Tensor::from_data(burn::tensor::TensorData::new(x_values, [h, w]), &device);
         x_embed = x_embed / w as f32;
+
         let pe: Tensor<B, 3> = self._pe_encoding(Tensor::stack(vec![x_embed, y_embed], 2));
         pe.permute([2, 0, 1])
     }
 
     /// Positionally encode points that are not normalized to [0,1].
-    pub fn forward_with_coords<B: Backend>(
-        &self,
-        coords: Tensor<B, 3>,
-        image_size: Size,
-    ) -> Tensor<B, 3> {
-        let (slice, shape) = coords.to_slice::<f32>();
-        let coords = Tensor::of_slice(slice, shape); // Deep copy
-        coords
+    pub fn forward_with_coords(&self, coords: Tensor<B, 3>, image_size: Size) -> Tensor<B, 3> {
+        // Normalize coordinates to [0, 1]
+        // coords[..., 0] = coords[..., 0] / image_size.1
+        // coords[..., 1] = coords[..., 1] / image_size.0
+
+        let coords_x = coords
+            .clone()
             .narrow(2, 0, 1)
-            .copy_(coords.narrow(2, 0, 1).div_scalar(image_size.1 as f32));
-        coords
+            .div_scalar(image_size.1 as f32);
+        let coords_y = coords
+            .clone()
             .narrow(2, 1, 1)
-            .copy_(coords.narrow(2, 1, 1).div_scalar(image_size.0 as f32));
-        self._pe_encoding(coords)
+            .div_scalar(image_size.0 as f32);
+
+        let normalized_coords = Tensor::cat(vec![coords_x, coords_y], 2);
+        self._pe_encoding(normalized_coords)
     }
 }
 
 #[cfg(test)]
 mod test {
+    use burn::tensor::backend::Backend;
+    use pyo3::types::PyAnyMethods;
     use pyo3::{PyResult, Python};
 
     use crate::{
@@ -88,28 +112,30 @@ mod test {
     #[test]
     fn test_position_embedding_pe_encoding() {
         fn python() -> PyResult<(PythonData<3>, PythonData<3>)> {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 let module = py
                     .import("segment_anything.modeling.prompt_encoder")?
                     .getattr("PositionEmbeddingRandom")?;
                 let module = module.call1((128,))?;
 
                 let input = random_python_tensor(py, [64, 69, 2])?;
-                let output = module.call_method1("_pe_encoding", (input,))?;
+                let output = module.call_method1("_pe_encoding", (input.clone(),))?;
                 Ok((input.try_into()?, output.try_into()?))
             })
         }
         let (input, python) = python().unwrap();
-        let pos_embedding = super::PositionEmbeddingRandom::new(Some(128), None);
+        let device: <TestBackend as Backend>::Device = Default::default();
+        let pos_embedding: super::PositionEmbeddingRandom<TestBackend> =
+            super::PositionEmbeddingRandom::new(Some(128), None, &device);
 
-        let output = pos_embedding._pe_encoding::<TestBackend>(input.into());
+        let output = pos_embedding._pe_encoding(input.into());
         python.almost_equal(output, 0.5);
     }
 
     #[test]
     fn test_position_embedding_forward() {
         fn python() -> PyResult<PythonData<3>> {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 let module = py
                     .import("segment_anything.modeling.prompt_encoder")?
                     .getattr("PositionEmbeddingRandom")?;
@@ -120,16 +146,18 @@ mod test {
             })
         }
         let python = python().unwrap();
-        let pos_embedding = super::PositionEmbeddingRandom::new(Some(128), None);
+        let device: <TestBackend as Backend>::Device = Default::default();
+        let pos_embedding: super::PositionEmbeddingRandom<TestBackend> =
+            super::PositionEmbeddingRandom::new(Some(128), None, &device);
 
-        let output = pos_embedding.forward::<TestBackend>(Size(64, 64));
+        let output = pos_embedding.forward(Size(64, 64));
         python.almost_equal(output, 1.);
     }
 
     #[test]
     fn test_position_embedding_with_coords() {
         fn python() -> PyResult<(PythonData<3>, PythonData<3>)> {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 let module = py
                     .import("segment_anything.modeling.prompt_encoder")?
                     .getattr("PositionEmbeddingRandom")?;
@@ -137,14 +165,19 @@ mod test {
                 let input = random_python_tensor(py, [64, 2, 2])?;
                 let output = module
                     .getattr("forward_with_coords")?
-                    .call1((input, (1024, 1024)))?;
+                    .call1((input.clone(), (1024, 1024)))?;
                 Ok((input.try_into()?, output.try_into()?))
             })
         }
         let (input, python) = python().unwrap();
-        let pos_embedding = super::PositionEmbeddingRandom::new(Some(128), None);
-        let output =
-            pos_embedding.forward_with_coords::<TestBackend>(input.into(), Size(1024, 1024));
+        let device: <TestBackend as Backend>::Device = Default::default();
+        let pos_embedding: super::PositionEmbeddingRandom<TestBackend> =
+            super::PositionEmbeddingRandom::new(Some(128), None, &device);
+        let output = pos_embedding.forward_with_coords(input.into(), Size(1024, 1024));
         python.almost_equal(output, 0.1);
     }
 }
+
+// Note: In Burn 0.18.0, the Module trait has changed
+// The forward method is not part of the Module trait anymore
+// This struct doesn't need to implement Module as it's not a neural network layer

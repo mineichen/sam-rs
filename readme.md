@@ -1,6 +1,9 @@
+# STATE
+The implementation creates a mask, but currently has worse quality compared to the original python version (See output of test_prediction)
+
 ## Converting models
 
-To convert models, drop the model file into `sam-convert` folder, and run `cargo run --release -- <vit_h | vit_b | vit_l | test> <file_name> <?skip_python>`. The converted model will be in the same folder as the original model, with the same name, but with the extension `.bin.gz`. It will take quite a long time, and needs some disk space (the middle json file is up to 16 GB for larger models).
+To convert models, drop the model file into `sam-convert` folder (e.g. sam-convert/sam_vit_b_01ec64.pth), and run `cargo run --release -- <vit_h | vit_b | vit_l | test> <file_name> <?skip_python>`. The converted model will be in the same folder as the original model, with the same name, but with the extension `.bin.gz`. It will take quite a long time, and needs some disk space (the middle json file is up to 16 GB for larger models).
 
 This will:
 1. Load the weights in python

@@ -8,21 +8,26 @@ use burn::{
 //     after projection to queries, keys, and values.
 #[derive(Debug, Module)]
 pub struct Attention<B: Backend> {
-    num_heads: usize,
-    q_proj: Linear<B>,
-    k_proj: Linear<B>,
-    v_proj: Linear<B>,
-    out_proj: Linear<B>,
+    pub num_heads: usize,
+    pub q_proj: Linear<B>,
+    pub k_proj: Linear<B>,
+    pub v_proj: Linear<B>,
+    pub out_proj: Linear<B>,
 }
 impl<B: Backend> Attention<B> {
-    pub fn new(embedding_dim: usize, num_heads: usize, downsample_rate: Option<usize>) -> Self {
+    pub fn new(
+        embedding_dim: usize,
+        num_heads: usize,
+        downsample_rate: Option<usize>,
+        device: &B::Device,
+    ) -> Self {
         let downsample_rate = downsample_rate.unwrap_or(1);
         let internal_dim = embedding_dim / downsample_rate;
 
-        let q_proj = LinearConfig::new(embedding_dim, internal_dim).init();
-        let k_proj = LinearConfig::new(embedding_dim, internal_dim).init();
-        let v_proj = LinearConfig::new(embedding_dim, internal_dim).init();
-        let out_proj = LinearConfig::new(internal_dim, embedding_dim).init();
+        let q_proj = LinearConfig::new(embedding_dim, internal_dim).init(device);
+        let k_proj = LinearConfig::new(embedding_dim, internal_dim).init(device);
+        let v_proj = LinearConfig::new(embedding_dim, internal_dim).init(device);
+        let out_proj = LinearConfig::new(internal_dim, embedding_dim).init(device);
         Self {
             num_heads,
             q_proj,
@@ -73,7 +78,7 @@ impl<B: Backend> Attention<B> {
 
 #[cfg(test)]
 mod test {
-    use pyo3::{PyResult, Python};
+    use pyo3::{types::PyAnyMethods, PyResult, Python};
 
     use crate::{
         python::{
@@ -87,7 +92,7 @@ mod test {
     fn test_attention() {
         const FILE: &str = "transformer_attention";
         fn python() -> PyResult<(PythonData<3>, PythonData<3>, PythonData<3>, PythonData<3>)> {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 let module = py
                     .import("segment_anything.modeling.transformer")?
                     .getattr("Attention")?;
@@ -97,7 +102,7 @@ mod test {
                 let q = random_python_tensor(py, [1, 32, 32])?;
                 let k = random_python_tensor(py, [1, 32, 32])?;
                 let v = random_python_tensor(py, [1, 32, 32])?;
-                let output = module.call1((q, k, v))?;
+                let output = module.call1((&q, &k, &v))?;
                 Ok((
                     q.try_into()?,
                     k.try_into()?,
@@ -107,7 +112,8 @@ mod test {
             })
         }
         let (q, k, v, python) = python().unwrap();
-        let mut attention = super::Attention::<TestBackend>::new(32, 8, Some(1));
+        let device = Default::default();
+        let mut attention = super::Attention::<TestBackend>::new(32, 8, Some(1), &device);
         attention = load_module(FILE, attention);
 
         let output = attention.forward(q.into(), k.into(), v.into());

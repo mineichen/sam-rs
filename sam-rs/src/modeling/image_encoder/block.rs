@@ -15,11 +15,11 @@ use super::attention::Attention;
 ///Transformer blocks with support of window attention and residual propagation blocks
 #[derive(Debug, Module)]
 pub struct Block<B: Backend> {
-    norm1: LayerNorm<B>,
-    norm2: LayerNorm<B>,
-    attn: Attention<B>,
-    window_size: usize,
-    mlp: MLPBlock<B>,
+    pub norm1: LayerNorm<B>,
+    pub norm2: LayerNorm<B>,
+    pub attn: Attention<B>,
+    pub window_size: usize,
+    pub mlp: MLPBlock<B>,
 }
 impl<B: Backend> Block<B> {
     // Args:
@@ -45,6 +45,7 @@ impl<B: Backend> Block<B> {
         rel_pos_zero_init: Option<bool>,
         window_size: Option<usize>,
         input_size: Option<Size>,
+        device: &B::Device,
     ) -> Self {
         let mlp_ratio = mlp_ratio.unwrap_or(4.0);
         let qkv_bias = qkv_bias.unwrap_or(true);
@@ -52,7 +53,7 @@ impl<B: Backend> Block<B> {
         let rel_pos_zero_init = rel_pos_zero_init.unwrap_or(true);
         let window_size = window_size.unwrap_or(0);
 
-        let norm1 = LayerNormConfig::new(dim).init();
+        let norm1 = LayerNormConfig::new(dim).init(device);
 
         let attn = Attention::new(
             dim,
@@ -64,10 +65,11 @@ impl<B: Backend> Block<B> {
                 0 => input_size,
                 _ => Some(Size(window_size, window_size)),
             },
+            device,
         );
-        let norm2 = LayerNormConfig::new(dim).init();
+        let norm2 = LayerNormConfig::new(dim).init(device);
 
-        let mlp = MLPBlock::new(dim, (dim as f32 * mlp_ratio) as usize, act_layer);
+        let mlp = MLPBlock::new(dim, (dim as f32 * mlp_ratio) as usize, act_layer, device);
         Self {
             norm1: norm1.into(),
             attn: attn.into(),
@@ -114,11 +116,23 @@ fn window_partition<B: Backend>(x: Tensor<B, 4>, window_size: usize) -> (Tensor<
 
     let pad_h = (window_size - h % window_size) % window_size;
     let pad_w = (window_size - w % window_size) % window_size;
+
+    // Pad H and W dimensions (dims 1 and 2 in BHWC format)
+    // Burn's pad only works on last 2 dims, so we need to permute to BCHW, pad, then permute back
     let x = if pad_h > 0 || pad_w > 0 {
-        x.pad(&[0, 0, 0, pad_w, 0, pad_h], "constant", None)
+        // BHWC -> BCHW
+        let x = x.permute([0, 3, 1, 2]);
+        // Now dims are [B, C, H, W]
+        // pad((left, right, top, bottom)) pads D-1 with left/right and D-2 with top/bottom
+        // So for [B, C, H, W]: D-2=H gets top/bottom, D-1=W gets left/right
+        // We want to pad right side of H and bottom side of W
+        let x = x.pad((0, pad_w, 0, pad_h), 0.);
+        // BCHW -> BHWC
+        x.permute([0, 2, 3, 1])
     } else {
         x
     };
+
     let (hp, wp) = (h + pad_h, w + pad_w);
     let x = x.reshape([
         b,
@@ -173,6 +187,7 @@ fn window_unpartition<B: Backend>(
 #[cfg(test)]
 mod test {
 
+    use pyo3::types::PyAnyMethods;
     use pyo3::{types::PyTuple, PyResult, Python};
 
     use crate::{
@@ -186,15 +201,16 @@ mod test {
     #[test]
     fn test_window_partition() {
         fn python() -> PyResult<(PythonData<4>, PythonData<4>, Size)> {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 let module = py
                     .import("segment_anything.modeling.image_encoder")?
                     .getattr("window_partition")?;
 
                 let input = random_python_tensor(py, [2, 256, 16, 16])?;
-                let output = module.call1((input, 16))?;
+                let output = module.call1((&input, 16))?;
                 let output = output.downcast::<PyTuple>()?;
-                let size = output.get_item(1)?.downcast::<PyTuple>()?;
+                let size = output.get_item(1)?;
+                let size = size.downcast::<PyTuple>()?;
                 let size = Size(size.get_item(0)?.extract()?, size.get_item(1)?.extract()?);
                 Ok((input.try_into()?, output.get_item(0)?.try_into()?, size))
             })
@@ -208,13 +224,13 @@ mod test {
     #[test]
     fn test_window_unpartition() {
         fn python() -> PyResult<(PythonData<4>, PythonData<4>)> {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 let module = py
                     .import("segment_anything.modeling.image_encoder")?
                     .getattr("window_unpartition")?;
 
                 let input = random_python_tensor(py, [2, 256, 16, 16])?;
-                let output = module.call1((input, 16, (16, 16), (14, 14)))?;
+                let output = module.call1((&input, 16, (16, 16), (14, 14)))?;
                 Ok((input.try_into()?, output.try_into()?))
             })
         }
@@ -229,7 +245,7 @@ mod test {
         const FILE: &str = "block";
 
         fn python() -> PyResult<(PythonData<4>, PythonData<4>)> {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 let module = py
                     .import("segment_anything.modeling.image_encoder")?
                     .getattr("Block")?;
@@ -237,14 +253,15 @@ mod test {
                 let layer_norm = py.import("torch.nn")?.getattr("LayerNorm")?;
                 let module =
                     module.call1((80, 8, 4.0, true, layer_norm, gelu, true, true, 14, (16, 16)))?;
-                module_to_file(FILE, py, module).unwrap();
+                module_to_file(FILE, py, &module).unwrap();
 
                 let input = random_python_tensor(py, [1, 16, 16, 80])?;
-                let output = module.call1((input,))?;
+                let output = module.call1((&input,))?;
                 Ok((input.try_into()?, output.try_into()?))
             })
         }
         let (input, python) = python().unwrap();
+        let device = Default::default();
         let mut block = super::Block::<TestBackend>::new(
             80,
             8,
@@ -255,6 +272,7 @@ mod test {
             Some(true),
             Some(14),
             Some(Size(16, 16)),
+            &device,
         );
         block = load_module(FILE, block);
 

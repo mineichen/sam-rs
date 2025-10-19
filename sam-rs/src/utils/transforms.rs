@@ -1,10 +1,7 @@
-use burn::tensor::{backend::Backend, Float, Int, Tensor};
+use burn::tensor::{backend::Backend, Int, Tensor};
 use image::{imageops::FilterType, ImageBuffer};
 
-use crate::{
-    burn_helpers::{TensorHelpers, ToFloat},
-    sam_predictor::Size,
-};
+use crate::{burn_helpers::TensorHelpers, sam_predictor::Size};
 
 /// Resizes images to the longest side 'target_length', as well as provides
 ///  methods for resizing coordinates and boxes. Provides methods for
@@ -18,14 +15,20 @@ impl ResizeLongestSide {
     }
     fn resize<B: Backend>(image: Tensor<B, 3, Int>, target_size: Size) -> Tensor<B, 3, Int> {
         let Size(tar_h, tar_w) = target_size;
-        let (image_data, shape) = image.to_slice::<f32>();
+        let device = image.device();
+        let (image_data, shape) = image.to_slice::<i32>();
         let image_data = image_data.iter().map(|x| *x as u8).collect::<Vec<u8>>();
-        let (width, height) = (shape[1], shape[0]);
+        let (height, width) = (shape[0], shape[1]);
         let img: ImageBuffer<image::Rgb<u8>, Vec<u8>> =
             ImageBuffer::from_raw(width as u32, height as u32, image_data).unwrap();
         let resized_img =
             image::imageops::resize(&img, tar_w as u32, tar_h as u32, FilterType::Lanczos3);
-        Tensor::of_slice(resized_img.into_raw(), [tar_h, tar_w, 3])
+        let resized_data: Vec<i32> = resized_img
+            .into_raw()
+            .into_iter()
+            .map(|x| x as i32)
+            .collect();
+        Tensor::of_slice(resized_data, [tar_h, tar_w, 3], &device)
     }
     // Expects a numpy array with shape HxWxC in uint8 format.
     pub fn apply_image<B: Backend>(&self, image: Tensor<B, 3, Int>) -> Tensor<B, 3, Int> {
@@ -38,13 +41,12 @@ impl ResizeLongestSide {
     // original image size in (H, W) format.
     pub fn apply_coords<B: Backend, const D: usize>(
         &self,
-        coords: Tensor<B, D, Int>,
+        coords: Tensor<B, D>,
         original_size: Size,
-    ) -> Tensor<B, D, Float> {
+    ) -> Tensor<B, D> {
         let Size(old_h, old_w) = original_size;
         let Size(new_h, new_w) = self.get_preprocess_shape(old_h, old_w, self.target_length);
-        let coords = coords.clone().to_float();
-        let coords_0 = coords.narrow(D - 1, 0, 1) * (new_w as f32 / old_w as f32);
+        let coords_0 = coords.clone().narrow(D - 1, 0, 1) * (new_w as f32 / old_w as f32);
         let coords_1 = coords.narrow(D - 1, 1, 1) * (new_h as f32 / old_h as f32);
         Tensor::cat(vec![coords_0, coords_1], D - 1)
     }
@@ -53,9 +55,9 @@ impl ResizeLongestSide {
     // in (H, W) format.
     pub fn apply_boxes<B: Backend>(
         &self,
-        boxes: Tensor<B, 2, Int>,
+        boxes: Tensor<B, 2>,
         original_size: Size,
-    ) -> Tensor<B, 2, Float> {
+    ) -> Tensor<B, 2> {
         let boxes = self.apply_coords(boxes.reshape_max([usize::MAX, 2, 2]), original_size);
         boxes.reshape_max([usize::MAX, 4])
     }
@@ -63,41 +65,116 @@ impl ResizeLongestSide {
     // transformation may not exactly match apply_image. apply_image is
     // the transformation expected by the model.
     //  Expects an image in BCHW format. May not exactly match apply_image.
-    pub fn apply_image_torch<B: Backend>(&self, image: Tensor<B, 4, Float>) -> Tensor<B, 4, Float> {
+    pub fn apply_image_torch<B: Backend>(&self, image: Tensor<B, 4>) -> Tensor<B, 4> {
         let shape = image.dims();
         let (h, w) = (shape[2], shape[3]);
-        let target_size = self.get_preprocess_shape(h, w, self.target_length);
-        image.upsample_bilinear2d(vec![target_size.0, target_size.1], false, None, None)
+        let Size(target_h, target_w) = self.get_preprocess_shape(h, w, self.target_length);
+
+        // Implement bilinear interpolation manually
+        self.bilinear_interpolate(image, target_h, target_w)
+    }
+
+    fn bilinear_interpolate<B: Backend>(
+        &self,
+        image: Tensor<B, 4>,
+        target_h: usize,
+        target_w: usize,
+    ) -> Tensor<B, 4> {
+        use burn::tensor::{ElementConversion, TensorData};
+
+        let shape = image.dims();
+        let (batch, channels, src_h, src_w) = (shape[0], shape[1], shape[2], shape[3]);
+
+        let device = image.device();
+        let image_data = image.to_data();
+        let image_slice = image_data.as_slice::<B::FloatElem>().unwrap();
+
+        let mut result = Vec::with_capacity(batch * channels * target_h * target_w);
+
+        // F.interpolate with mode='bilinear', align_corners=False
+        for b in 0..batch {
+            for c in 0..channels {
+                for i in 0..target_h {
+                    for j in 0..target_w {
+                        // Calculate source coordinates using align_corners=False formula
+                        let src_y =
+                            ((i as f32 + 0.5) * src_h as f32 / target_h as f32 - 0.5).max(0.0);
+                        let src_x =
+                            ((j as f32 + 0.5) * src_w as f32 / target_w as f32 - 0.5).max(0.0);
+
+                        let y0 = src_y.floor() as usize;
+                        let y1 = (y0 + 1).min(src_h - 1);
+                        let x0 = src_x.floor() as usize;
+                        let x1 = (x0 + 1).min(src_w - 1);
+
+                        let wy = src_y - y0 as f32;
+                        let wx = src_x - x0 as f32;
+
+                        // Bilinear interpolation
+                        let v00 = image_slice
+                            [b * channels * src_h * src_w + c * src_h * src_w + y0 * src_w + x0]
+                            .elem::<f32>();
+                        let v01 = image_slice
+                            [b * channels * src_h * src_w + c * src_h * src_w + y0 * src_w + x1]
+                            .elem::<f32>();
+                        let v10 = image_slice
+                            [b * channels * src_h * src_w + c * src_h * src_w + y1 * src_w + x0]
+                            .elem::<f32>();
+                        let v11 = image_slice
+                            [b * channels * src_h * src_w + c * src_h * src_w + y1 * src_w + x1]
+                            .elem::<f32>();
+
+                        let interp = v00 * (1.0 - wx) * (1.0 - wy)
+                            + v01 * wx * (1.0 - wy)
+                            + v10 * (1.0 - wx) * wy
+                            + v11 * wx * wy;
+
+                        result.push(B::FloatElem::from_elem(interp));
+                    }
+                }
+            }
+        }
+
+        Tensor::from_data(
+            TensorData::new(result, [batch, channels, target_h, target_w]),
+            &device,
+        )
     }
 
     // Expects a torch tensor with length 2 in the last dimension. Requires the
     // original image size in (H, W) format.
     pub fn apply_coords_torch<B: Backend, const D: usize>(
         &self,
-        coords: Tensor<B, D, Int>, //Maybe int
+        coords: Tensor<B, D>, //Expected to be Float
         original_size: Size,
-    ) -> Tensor<B, D, Float> {
+    ) -> Tensor<B, D> {
         let Size(old_h, old_w) = original_size;
         let Size(new_h, new_w) = self.get_preprocess_shape(old_h, old_w, self.target_length);
-        let coords = coords.clone().to_float();
 
-        // Update the first column of coords
-        let coords_0: Tensor<B, 3> = coords.select(1, 0).mul_scalar(new_w as f32 / old_w as f32);
-        Tensor::copy_(&mut coords.select(1, 0), coords_0);
+        // Scale the coordinates - coords[..., 0] and coords[..., 1] in Python
+        // This modifies only the first two elements of the last dimension
+        let last_dim_size = coords.dims()[D - 1];
 
-        // Update the second column of coords
-        let coords_1: Tensor<B, 3> = coords.select(1, 1).mul_scalar(new_h as f32 / old_h as f32);
-        coords.select(1, 1).copy_(coords_1);
-        coords
+        // Scale column 0 and column 1
+        let coords_0 = coords.clone().narrow(D - 1, 0, 1) * (new_w as f32 / old_w as f32);
+        let coords_1 = coords.clone().narrow(D - 1, 1, 1) * (new_h as f32 / old_h as f32);
+
+        // If there are more than 2 columns, keep the rest unchanged
+        if last_dim_size > 2 {
+            let coords_rest = coords.narrow(D - 1, 2, last_dim_size - 2);
+            Tensor::cat(vec![coords_0, coords_1, coords_rest], D - 1)
+        } else {
+            Tensor::cat(vec![coords_0, coords_1], D - 1)
+        }
     }
 
     // Expects a torch tensor with shape Bx4. Requires the original image
     // size in (H, W) format.
     pub fn apply_boxes_torch<B: Backend>(
         &self,
-        boxes: Tensor<B, 2, Int>,
+        boxes: Tensor<B, 2>,
         original_size: Size,
-    ) -> Tensor<B, 2, Float> {
+    ) -> Tensor<B, 2> {
         let boxes = self.apply_coords_torch(boxes.reshape_max([usize::MAX, 2, 2]), original_size);
         boxes.reshape_max([usize::MAX, 4])
     }
@@ -113,7 +190,7 @@ impl ResizeLongestSide {
 
 #[cfg(test)]
 mod test {
-    use pyo3::{PyAny, PyResult, Python};
+    use pyo3::{types::PyAnyMethods, Bound, PyAny, PyResult, Python};
 
     use crate::{
         python::python_data::{random_python_tensor, random_python_tensor_int, PythonData},
@@ -121,7 +198,7 @@ mod test {
         tests::helpers::TestBackend,
     };
 
-    fn python_module<'a>(py: &'a Python) -> PyResult<&'a PyAny> {
+    fn python_module<'a>(py: &'a Python) -> PyResult<Bound<'a, PyAny>> {
         let module = py
             .import("segment_anything.utils.transforms")?
             .getattr("ResizeLongestSide")?;
@@ -130,7 +207,7 @@ mod test {
     }
     #[test]
     fn test_resize_get_preprocess_shape() {
-        let python: PyResult<Size> = Python::with_gil(|py| {
+        let python: PyResult<Size> = Python::attach(|py| {
             let module = python_module(&py)?;
             let output = module.call_method1("get_preprocess_shape", (32, 32, 64))?;
             Ok(output.try_into()?)
@@ -143,14 +220,14 @@ mod test {
     }
     #[test]
     fn test_resize_apply_image() {
-        let python: PyResult<(PythonData<3, i64>, PythonData<3, i64>)> = Python::with_gil(|py| {
+        let python: PyResult<(PythonData<3, i64>, PythonData<3, i64>)> = Python::attach(|py| {
             let module = python_module(&py)?;
             let uint8 = py.import("torch")?.getattr("uint8")?;
             let input = random_python_tensor(py, [120, 180, 3])?
                 .call_method1("type", (uint8,))?
                 .call_method0("numpy")?;
 
-            let output = module.call_method1("apply_image", (input,))?;
+            let output = module.call_method1("apply_image", (input.clone(),))?;
             Ok((input.try_into()?, output.try_into()?))
         });
         let (input, python) = python.unwrap();
@@ -161,12 +238,12 @@ mod test {
     #[test]
     fn test_resize_apply_coords() {
         let original_size = (1200, 1800);
-        let python: PyResult<(PythonData<3>, PythonData<3>)> = Python::with_gil(|py| {
+        let python: PyResult<(PythonData<3>, PythonData<3>)> = Python::attach(|py| {
             let module = python_module(&py)?;
             let input = random_python_tensor_int(py, [1, 2, 2])?
                 .getattr("numpy")?
                 .call0()?;
-            let output = module.call_method1("apply_coords", (input, original_size))?;
+            let output = module.call_method1("apply_coords", (input.clone(), original_size))?;
             Ok((input.try_into()?, output.try_into()?))
         });
         let (input, python) = python.unwrap();
@@ -178,12 +255,12 @@ mod test {
     #[test]
     fn test_resize_apply_boxes() {
         let original_size = (1200, 1800);
-        let python: PyResult<(PythonData<2>, PythonData<2>)> = Python::with_gil(|py| {
+        let python: PyResult<(PythonData<2>, PythonData<2>)> = Python::attach(|py| {
             let module = python_module(&py)?;
             let input = random_python_tensor_int(py, [1, 4])?
                 .getattr("numpy")?
                 .call0()?;
-            let output = module.call_method1("apply_boxes", (input, original_size))?;
+            let output = module.call_method1("apply_boxes", (input.clone(), original_size))?;
             Ok((input.try_into()?, output.try_into()?))
         });
         let (input, python) = python.unwrap();
@@ -194,10 +271,10 @@ mod test {
 
     #[test]
     fn test_resize_image_torch() {
-        let python: PyResult<(PythonData<4>, PythonData<4>)> = Python::with_gil(|py| {
+        let python: PyResult<(PythonData<4>, PythonData<4>)> = Python::attach(|py| {
             let module = python_module(&py)?;
             let input = random_python_tensor(py, [1, 3, 32, 32])?;
-            let output = module.call_method1("apply_image_torch", (input,))?;
+            let output = module.call_method1("apply_image_torch", (input.clone(),))?;
             Ok((input.try_into()?, output.try_into()?))
         });
         let (input, python) = python.unwrap();
@@ -208,10 +285,10 @@ mod test {
     #[test]
     fn test_resize_coords_torch() {
         let size = (32, 32);
-        let python: PyResult<(PythonData<2>, PythonData<2>)> = Python::with_gil(|py| {
+        let python: PyResult<(PythonData<2>, PythonData<2>)> = Python::attach(|py| {
             let module = python_module(&py)?;
             let input = random_python_tensor_int(py, [32, 32])?;
-            let output = module.call_method1("apply_coords_torch", (input, size))?;
+            let output = module.call_method1("apply_coords_torch", (input.clone(), size))?;
             Ok((input.try_into()?, output.try_into()?))
         });
         let (input, python) = python.unwrap();
@@ -222,10 +299,10 @@ mod test {
     #[test]
     fn test_resize_boxes_torch() {
         let size = (32, 32);
-        let python: PyResult<(PythonData<2>, PythonData<2>)> = Python::with_gil(|py| {
+        let python: PyResult<(PythonData<2>, PythonData<2>)> = Python::attach(|py| {
             let module = python_module(&py)?;
             let input = random_python_tensor_int(py, [32, 32])?;
-            let output = module.call_method1("apply_boxes_torch", (input, size))?;
+            let output = module.call_method1("apply_boxes_torch", (input.clone(), size))?;
             Ok((input.try_into()?, output.try_into()?))
         });
         let (input, python) = python.unwrap();

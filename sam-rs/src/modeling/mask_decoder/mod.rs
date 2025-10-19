@@ -19,17 +19,17 @@ use super::{
 
 #[derive(Debug, Module)]
 pub struct MaskDecoder<B: Backend> {
-    transformer: TwoWayTransformer<B>,
-    iou_token: Embedding<B>,
+    pub transformer: TwoWayTransformer<B>,
+    pub iou_token: Embedding<B>,
     pub num_mask_tokens: usize,
-    mask_tokens: Embedding<B>,
-    output_hypernetworks_mlps: Vec<MLP<B>>,
-    iou_prediction_head: MLP<B>,
-    output_upscaling0: ConvTranspose2d<B>,
-    output_upscaling1: LayerNorm2d<B>,
-    output_upscaling2: Activation,
-    output_upscaling3: ConvTranspose2d<B>,
-    output_upscaling4: Activation,
+    pub mask_tokens: Embedding<B>,
+    pub output_hypernetworks_mlps: Vec<MLP<B>>,
+    pub iou_prediction_head: MLP<B>,
+    pub output_upscaling0: ConvTranspose2d<B>,
+    pub output_upscaling1: LayerNorm2d<B>,
+    pub output_upscaling2: Activation,
+    pub output_upscaling3: ConvTranspose2d<B>,
+    pub output_upscaling4: Activation,
 }
 impl<B: Backend> MaskDecoder<B> {
     pub fn new(
@@ -39,27 +39,28 @@ impl<B: Backend> MaskDecoder<B> {
         activation: Option<Activation>,
         iou_head_depth: Option<usize>,
         iou_head_hidden_dim: Option<usize>,
+        device: &B::Device,
     ) -> Self {
         let num_multimask_outputs = num_multimask_outputs.unwrap_or(3);
         let activation = activation.unwrap_or(Activation::GELU);
         let iou_head_depth = iou_head_depth.unwrap_or(3);
         let iou_head_hidden_dim = iou_head_hidden_dim.unwrap_or(256);
 
-        let iou_token = EmbeddingConfig::new(1, transformer_dim).init();
+        let iou_token = EmbeddingConfig::new(1, transformer_dim).init(device);
         let num_mask_tokens = num_multimask_outputs + 1;
 
-        let mask_tokens = EmbeddingConfig::new(num_mask_tokens, transformer_dim).init();
+        let mask_tokens = EmbeddingConfig::new(num_mask_tokens, transformer_dim).init(device);
 
         let output_upscaling0 =
             ConvTranspose2dConfig::new(transformer_dim, transformer_dim / 4, [2, 2])
                 .set_stride([2, 2])
-                .init();
-        let output_upscaling1 = LayerNorm2d::new(transformer_dim / 4, None);
+                .init(device);
+        let output_upscaling1 = LayerNorm2d::new(transformer_dim / 4, None, device);
         let output_upscaling2 = activation;
         let output_upscaling3 =
             ConvTranspose2dConfig::new(transformer_dim / 4, transformer_dim / 8, [2, 2])
                 .set_stride([2, 2])
-                .init();
+                .init(device);
         let output_upscaling4 = activation;
 
         let mut output_hypernetworks_mlps = Vec::new();
@@ -70,6 +71,7 @@ impl<B: Backend> MaskDecoder<B> {
                 transformer_dim / 8,
                 3,
                 None,
+                device,
             ));
         }
         let iou_prediction_head = MLP::new(
@@ -78,6 +80,7 @@ impl<B: Backend> MaskDecoder<B> {
             num_mask_tokens,
             iou_head_depth,
             None,
+            device,
         );
         MaskDecoder {
             transformer,
@@ -123,9 +126,11 @@ impl<B: Backend> MaskDecoder<B> {
         );
 
         if multimask_output {
+            let mask_dims = masks.dims()[1];
+            let iou_dims = iou_pred.dims()[1];
             (
-                masks.narrow(1, 1, masks.dims()[1] - 1),
-                iou_pred.narrow(1, 1, iou_pred.dims()[1] - 1),
+                masks.narrow(1, 1, mask_dims - 1),
+                iou_pred.narrow(1, 1, iou_dims - 1),
             )
         } else {
             (masks.narrow(1, 0, 1), iou_pred.narrow(1, 0, 1))
@@ -143,21 +148,22 @@ impl<B: Backend> MaskDecoder<B> {
         let ws1 = self.iou_token.clone().into_record().weight.val();
         let ws2 = self.mask_tokens.clone().into_record().weight.val();
         let output_tokens = Tensor::cat(vec![ws1, ws2], 0);
-        let output_tokens = output_tokens.unsqueeze().expand(
-            vec![sparse_prompt_embeddings.dims()[0], usize::MAX, usize::MAX],
-            false,
-        );
+        // Use repeat_dim instead of expand for Burn 0.18.0
+        let batch_size = sparse_prompt_embeddings.dims()[0];
+        let output_tokens = output_tokens
+            .unsqueeze()
+            .repeat_dim(0, batch_size);
         let tokens = Tensor::cat(vec![output_tokens, sparse_prompt_embeddings], 1);
 
-        let src = image_embeddings.repeat_interleave_self_int(tokens.dims()[0], Some(0), None)
-            + dense_prompt_embeddings;
-        let pos_src = image_pe.repeat_interleave_self_int(tokens.dims()[0], Some(0), None);
+        // Concatenate image embeddings with dense prompt embeddings
+        let src = image_embeddings.clone() + dense_prompt_embeddings.clone();
+        let pos_src = image_pe.clone();
 
         let shape = src.dims();
         let (b, c, h, w) = (shape[0], shape[1], shape[2], shape[3]);
 
         let (hs, src) = self.transformer.forward(src, pos_src, tokens);
-        let iou_token_out = hs.narrow(1, 0, 1);
+        let iou_token_out = hs.clone().narrow(1, 0, 1);
         let dims = iou_token_out.dims();
         let iou_token_out = iou_token_out.reshape([dims[0], dims[2]]);
 
@@ -167,7 +173,7 @@ impl<B: Backend> MaskDecoder<B> {
         let upscaled_embedding = self.output_upscaling(src);
         let mut hyper_in_list: Vec<Tensor<B, 2>> = vec![];
         for i in 0..self.num_mask_tokens {
-            let input = mask_tokens_out.narrow(1, i, 1);
+            let input = mask_tokens_out.clone().narrow(1, i, 1);
             let dims = input.dims();
             let input = input.reshape([dims[0], dims[2]]);
             let item = self.output_hypernetworks_mlps[i as usize].forward(input);
@@ -182,7 +188,7 @@ impl<B: Backend> MaskDecoder<B> {
             .reshape_max([b, usize::MAX, h, w]);
 
         let iou_pred = self.iou_prediction_head.forward(iou_token_out).unsqueeze();
-        return (masks, iou_pred);
+        (masks, iou_pred)
     }
 
     fn output_upscaling(&self, x: Tensor<B, 4>) -> Tensor<B, 4> {
@@ -199,9 +205,10 @@ impl<B: Backend> MaskDecoder<B> {
 #[cfg(test)]
 mod test {
 
+    use pyo3::types::{PyAnyMethods, PyDictMethods};
     use pyo3::{
+        prelude::*,
         types::{PyDict, PyTuple},
-        PyResult, Python,
     };
 
     use crate::{
@@ -224,7 +231,7 @@ mod test {
             PythonData<4>,
             PythonData<2>,
         )> {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 let relu = py.import("torch.nn")?.getattr("ReLU")?;
                 let gelu = py.import("torch.nn")?.getattr("GELU")?;
                 let transformer = py
@@ -241,15 +248,20 @@ mod test {
                 kwargs.set_item("activation", gelu)?;
                 kwargs.set_item("iou_head_depth", 3)?;
                 kwargs.set_item("iou_head_hidden_dim", 256)?;
-                let module = module.call((), Some(kwargs))?;
+                let module = module.call((), Some(&kwargs))?;
                 module_to_file(FILE, py, &module)?;
 
                 let image_embedding = random_python_tensor(py, [1, 64, 16, 16])?;
                 let image_pe = random_python_tensor(py, [1, 64, 16, 16])?;
                 let sparse_prompt = random_python_tensor(py, [16, 2, 64])?;
                 let dense_prompt = random_python_tensor(py, [16, 64, 16, 16])?;
-                let output =
-                    module.call1((image_embedding, image_pe, sparse_prompt, dense_prompt, true))?;
+                let output = module.call1((
+                    &image_embedding,
+                    &image_pe,
+                    &sparse_prompt,
+                    &dense_prompt,
+                    true,
+                ))?;
                 let output = output.downcast::<PyTuple>()?;
                 let masks = output.get_item(0)?;
                 let iou_pred = output.get_item(1)?;
@@ -265,8 +277,9 @@ mod test {
         }
         let (image_embedding, image_pe, sparse_prompt, dense_prompt, masks, iou_pred) =
             python().unwrap();
+        let device = &Default::default();
         let two_way_transformer =
-            TwoWayTransformer::new(2, 64, 2, 512, Some(Activation::ReLU), Some(2));
+            TwoWayTransformer::new(2, 64, 2, 512, Some(Activation::ReLU), Some(2), device);
         let mut mask_decoder = super::MaskDecoder::<TestBackend>::new(
             64,
             two_way_transformer,
@@ -274,6 +287,7 @@ mod test {
             Some(Activation::GELU),
             Some(3),
             Some(64),
+            device,
         );
         mask_decoder = load_module(FILE, mask_decoder);
 
@@ -300,7 +314,7 @@ mod test {
             PythonData<4>,
             PythonData<2>,
         )> {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 let relu = py.import("torch.nn")?.getattr("ReLU")?;
                 let gelu = py.import("torch.nn")?.getattr("GELU")?;
                 let transformer = py
@@ -317,7 +331,7 @@ mod test {
                 kwargs.set_item("activation", gelu)?;
                 kwargs.set_item("iou_head_depth", 3)?;
                 kwargs.set_item("iou_head_hidden_dim", 256)?;
-                let module = module.call((), Some(kwargs))?;
+                let module = module.call((), Some(&kwargs))?;
                 module_to_file(FILE, py, &module)?;
 
                 let image_embedding = random_python_tensor(py, [1, 64, 16, 16])?;
@@ -326,7 +340,7 @@ mod test {
                 let dense_prompt = random_python_tensor(py, [16, 64, 16, 16])?;
                 let output = module.call_method1(
                     "predict_masks",
-                    (image_embedding, image_pe, sparse_prompt, dense_prompt),
+                    (&image_embedding, &image_pe, &sparse_prompt, &dense_prompt),
                 )?;
                 let output = output.downcast::<PyTuple>()?;
                 let masks = output.get_item(0)?;
@@ -349,8 +363,9 @@ mod test {
             masks,
             iou_pred,
         ) = python().unwrap();
+        let device = &Default::default();
         let two_way_transformer =
-            TwoWayTransformer::new(2, 64, 2, 512, Some(Activation::ReLU), Some(2));
+            TwoWayTransformer::new(2, 64, 2, 512, Some(Activation::ReLU), Some(2), device);
         let mut mask_decoder = super::MaskDecoder::<TestBackend>::new(
             64,
             two_way_transformer,
@@ -358,6 +373,7 @@ mod test {
             Some(Activation::GELU),
             Some(3),
             Some(64),
+            device,
         );
         mask_decoder = load_module(FILE, mask_decoder);
 

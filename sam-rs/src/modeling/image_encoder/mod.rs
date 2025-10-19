@@ -5,7 +5,10 @@ use super::common::{activation::Activation, layer_norm_2d::LayerNorm2d};
 use crate::sam_predictor::Size;
 use burn::{
     module::{Module, Param},
-    nn::conv::{Conv2d, Conv2dConfig, Conv2dPaddingConfig},
+    nn::{
+        conv::{Conv2d, Conv2dConfig},
+        PaddingConfig2d,
+    },
     tensor::{backend::Backend, Float, Tensor},
 };
 mod attention;
@@ -16,13 +19,13 @@ mod patch_embed;
 #[derive(Debug, Module)]
 pub struct ImageEncoderViT<B: Backend> {
     pub img_size: usize,
-    patch_embed: PatchEmbed<B>,
-    pos_embed: Option<Param<Tensor<B, 4>>>,
-    blocks: Vec<Block<B>>,
-    neck0: Conv2d<B>,
-    neck1: LayerNorm2d<B>,
-    neck2: Conv2d<B>,
-    neck3: LayerNorm2d<B>,
+    pub patch_embed: PatchEmbed<B>,
+    pub pos_embed: Option<Param<Tensor<B, 4>>>,
+    pub blocks: Vec<Block<B>>,
+    pub neck0: Conv2d<B>,
+    pub neck1: LayerNorm2d<B>,
+    pub neck2: Conv2d<B>,
+    pub neck3: LayerNorm2d<B>,
 }
 impl<B: Backend> ImageEncoderViT<B> {
     // Args:
@@ -57,6 +60,7 @@ impl<B: Backend> ImageEncoderViT<B> {
         rel_pos_zero_init: Option<bool>,
         window_size: Option<usize>,
         global_attn_indexes: Option<Vec<usize>>,
+        device: &B::Device,
     ) -> Self {
         let img_size = img_size.unwrap_or(1024);
         let patch_size = patch_size.unwrap_or(16);
@@ -79,15 +83,14 @@ impl<B: Backend> ImageEncoderViT<B> {
             None,
             Some(in_chans),
             Some(embed_dim),
+            device,
         );
         let mut pos_embed = None;
         if use_abs_pos {
-            pos_embed = Some(Param::from(Tensor::zeros([
-                1,
-                img_size / patch_size,
-                img_size / patch_size,
-                embed_dim,
-            ])));
+            pos_embed = Some(Param::from_tensor(Tensor::zeros(
+                [1, img_size / patch_size, img_size / patch_size, embed_dim],
+                device,
+            )));
         }
 
         let mut blocks = vec![];
@@ -107,19 +110,20 @@ impl<B: Backend> ImageEncoderViT<B> {
                 Some(rel_pos_zero_init),
                 Some(window_size),
                 Some(Size(img_size / patch_size, img_size / patch_size)),
+                device,
             );
             blocks.push(block);
         }
 
         let neck0 = Conv2dConfig::new([embed_dim, out_chans], [1, 1])
             .with_bias(false)
-            .init();
-        let neck1 = LayerNorm2d::new(out_chans, None);
+            .init(device);
+        let neck1 = LayerNorm2d::new(out_chans, None, device);
         let neck2 = Conv2dConfig::new([out_chans, out_chans], [3, 3])
             .with_bias(false)
-            .with_padding(Conv2dPaddingConfig::Explicit(1, 1))
-            .init();
-        let neck3 = LayerNorm2d::new(out_chans, None);
+            .with_padding(PaddingConfig2d::Explicit(1, 1))
+            .init(device);
+        let neck3 = LayerNorm2d::new(out_chans, None, device);
         Self {
             img_size,
             patch_embed,
@@ -152,6 +156,7 @@ impl<B: Backend> ImageEncoderViT<B> {
 
 #[cfg(test)]
 mod test {
+    use pyo3::types::{PyAnyMethods, PyDictMethods};
     use pyo3::{types::PyDict, PyResult, Python};
 
     use super::ImageEncoderViT;
@@ -168,7 +173,7 @@ mod test {
     fn test_image_encoder() {
         const FILE: &str = "image_encoder";
         fn python() -> PyResult<(PythonData<4>, PythonData<4>)> {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 let module = py
                     .import("segment_anything.modeling.image_encoder")?
                     .getattr("ImageEncoderViT")?;
@@ -191,15 +196,16 @@ mod test {
                 kwargs.set_item("rel_pos_zero_init", true)?;
                 kwargs.set_item("window_size", 14)?;
                 kwargs.set_item("global_attn_indexes", (7, 15, 23, 31))?;
-                let module = module.call((), Some(kwargs))?;
+                let module = module.call((), Some(&kwargs))?;
                 module_to_file(FILE, py, &module)?;
 
                 let input = random_python_tensor(py, [1, 3, 4, 4])?;
-                let output = module.call1((input,))?;
+                let output = module.call1((&input,))?;
                 Ok((input.try_into()?, output.try_into()?))
             })
         }
         let (input, python) = python().unwrap();
+        let device = Default::default();
         let img_size = 4;
         let mut image_encoder = ImageEncoderViT::<TestBackend>::new(
             Some(img_size),
@@ -217,6 +223,7 @@ mod test {
             Some(true),
             Some(14),
             Some(vec![7, 15, 23, 31]),
+            &device,
         );
         image_encoder = load_module(FILE, image_encoder);
 

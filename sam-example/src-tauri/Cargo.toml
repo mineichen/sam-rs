@@ -10,17 +10,17 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [build-dependencies]
-tauri-build = { version = "1.2", features = [] }
+tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "1.2", features = ["dialog-open", "protocol-all", "shell-open"] }
+tauri = { version = "2", features = ["dialog-open", "protocol-all", "shell-open"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sam-rs = { path = "../../sam-rs" }
 flume = "0.10.14"
-burn = { git = "https://github.com/karelnagel/burn" }
-burn-ndarray = { git = "https://github.com/karelnagel/burn" }
-burn-tch = { git = "https://github.com/karelnagel/burn" }
+burn.workspace = true
+burn-ndarray.workspace = true
+burn-wgpu.workspace = true
 
 [features]
 # this feature is used for production builds or when `devPath` points to the filesystem

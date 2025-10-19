@@ -1,11 +1,11 @@
 use std::borrow::BorrowMut;
 
-use crate::{python::python_data::pyany_to_tensor, sam::SamRecord};
+use crate::python::python_data::pyany_to_tensor;
 use burn::{
     module::Param,
     tensor::{backend::Backend, Tensor},
 };
-use pyo3::PyAny;
+use pyo3::{Bound, PyAny};
 
 pub fn _print_match_key(key: &str) {
     match key.contains("bias") || key.contains("rel_pos_h") || key.contains("rel_pos_w") {
@@ -26,17 +26,21 @@ const TRANSPOSED: [&str; 7] = [
 fn needs_transpose(key: &str) -> bool {
     TRANSPOSED.iter().any(|x| key.contains(x)) || (key.contains("layers") && key.contains("weight"))
 }
-fn set_value<B: Backend, const D: usize>(old: &mut Param<Tensor<B, D>>, new: &PyAny, key: &str) {
+fn set_value<B: Backend, const D: usize>(
+    old: &mut Param<Tensor<B, D>>,
+    new: Bound<PyAny>,
+    key: &str,
+) {
     let mut new = pyany_to_tensor(new);
     if needs_transpose(key) {
         new = new.transpose();
     }
     assert_eq!(old.dims(), new.dims(), "Dims not same for: {key}");
-    *old = Param::from(new);
+    *old = Param::from_tensor(new);
 }
 fn set_value_opt<B: Backend, const D: usize>(
     old: &mut Option<Param<Tensor<B, D>>>,
-    new: &PyAny,
+    new: Bound<PyAny>,
     key: &str,
 ) {
     let mut new = pyany_to_tensor(new);
@@ -50,10 +54,10 @@ fn set_value_opt<B: Backend, const D: usize>(
         new.dims(),
         "Dims not same for: {key}"
     );
-    *old = Some(Param::from(new));
+    *old = Some(Param::from_tensor(new));
 }
 
-pub fn update_tensor<B: Backend>(sam: &mut SamRecord<B>, key: &str, value: &PyAny) {
+pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value: Bound<PyAny>) {
     match key {
         "image_encoder.blocks[6].mlp.lin2.weight" => set_value(
             sam.image_encoder.blocks[6].mlp.lin2.weight.borrow_mut(),
@@ -1542,6 +1546,10 @@ pub fn update_tensor<B: Backend>(sam: &mut SamRecord<B>, key: &str, value: &PyAn
             value,
             key,
         ),
+        "prompt_encoder.pe_layer.positional_encoding_gaussian_matrix" => {
+            let new_tensor: Tensor<B, 2> = pyany_to_tensor(value);
+            *sam.prompt_encoder.pe_layer.positional_encoding_gaussian_matrix.borrow_mut() = Param::from_tensor(new_tensor);
+        }
         "image_encoder.blocks[10].norm1.beta" => set_value(
             sam.image_encoder.blocks[10].norm1.beta.borrow_mut(),
             value,

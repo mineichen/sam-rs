@@ -16,18 +16,18 @@ use burn::{
 pub struct PromptEncoder<B: Backend> {
     pub embed_dim: usize,
     pub input_image_size: Size,
-    image_embedding_size: Size,
-    pe_layer: PositionEmbeddingRandom,
-    point_embeddings: Vec<Embedding<B>>,
-    no_mask_embed: Embedding<B>,
-    not_a_point_embed: Embedding<B>,
-    mask_downscaling0: Conv2d<B>,
-    mask_downscaling1: LayerNorm2d<B>,
-    mask_downscaling2: Activation,
-    mask_downscaling3: Conv2d<B>,
-    mask_downscaling4: LayerNorm2d<B>,
-    mask_downscaling5: Activation,
-    mask_downscaling6: Conv2d<B>,
+    pub image_embedding_size: Size,
+    pub pe_layer: PositionEmbeddingRandom<B>,
+    pub point_embeddings: Vec<Embedding<B>>,
+    pub no_mask_embed: Embedding<B>,
+    pub not_a_point_embed: Embedding<B>,
+    pub mask_downscaling0: Conv2d<B>,
+    pub mask_downscaling1: LayerNorm2d<B>,
+    pub mask_downscaling2: Activation,
+    pub mask_downscaling3: Conv2d<B>,
+    pub mask_downscaling4: LayerNorm2d<B>,
+    pub mask_downscaling5: Activation,
+    pub mask_downscaling6: Conv2d<B>,
 }
 
 impl<B: Backend> PromptEncoder<B>
@@ -51,31 +51,31 @@ where
         input_image_size: Size,
         mask_in_chans: usize,
         activation: Option<Activation>,
+        device: &B::Device,
     ) -> Self {
         let activation = activation.unwrap_or(Activation::GELU);
 
-        let pe_layer = PositionEmbeddingRandom::new(Some(embed_dim / 2), None);
+        let pe_layer = PositionEmbeddingRandom::new(Some(embed_dim / 2), None, device);
         let num_point_embeddings: usize = 4; // pos/neg point + 2 box corners
-
         let mut point_embeddings = vec![];
         for _ in 0..num_point_embeddings {
-            point_embeddings.push(EmbeddingConfig::new(1, embed_dim).init());
+            point_embeddings.push(EmbeddingConfig::new(1, embed_dim).init(device));
         }
-        let not_a_point_embed = EmbeddingConfig::new(1, embed_dim).init();
+        let not_a_point_embed = EmbeddingConfig::new(1, embed_dim).init(device);
 
         let mask_downscaling0 = Conv2dConfig::new([1, mask_in_chans / 4], [2, 2])
             .with_stride([2, 2])
-            .init();
-        let mask_downscaling1 = LayerNorm2d::new(mask_in_chans / 4, None);
+            .init(device);
+        let mask_downscaling1 = LayerNorm2d::new(mask_in_chans / 4, None, device);
         let mask_downscaling2 = activation;
         let mask_downscaling3 = Conv2dConfig::new([mask_in_chans / 4, mask_in_chans], [2, 2])
             .with_stride([2, 2])
-            .init();
-        let mask_downscaling4 = LayerNorm2d::new(mask_in_chans, None);
+            .init(device);
+        let mask_downscaling4 = LayerNorm2d::new(mask_in_chans, None, device);
         let mask_downscaling5 = activation;
-        let mask_downscaling6 = Conv2dConfig::new([mask_in_chans, embed_dim], [1, 1]).init();
+        let mask_downscaling6 = Conv2dConfig::new([mask_in_chans, embed_dim], [1, 1]).init(device);
 
-        let no_mask_embed = EmbeddingConfig::new(1, embed_dim).init();
+        let no_mask_embed = EmbeddingConfig::new(1, embed_dim).init(device);
         Self {
             embed_dim,
             input_image_size,
@@ -108,9 +108,10 @@ where
     fn _embed_points(&self, points: Tensor<B, 3>, labels: Tensor<B, 2>, pad: bool) -> Tensor<B, 3> {
         let mut points = points + 0.5; // Shift to center of pixel
         let mut labels = labels;
+        let device = points.device();
         if pad {
-            let padding_point = Tensor::zeros([points.dims()[0], 1, 2]);
-            let padding_label = -Tensor::ones([labels.dims()[0], 1]);
+            let padding_point = Tensor::zeros([points.dims()[0], 1, 2], &device);
+            let padding_label = -Tensor::ones([labels.dims()[0], 1], &device);
             points = Tensor::cat(vec![points, padding_point], 1);
             labels = Tensor::cat(vec![labels, padding_label], 1);
         }
@@ -122,43 +123,52 @@ where
         let mask_zero: Tensor<B, 3, Bool> = labels.clone().equal_elem(0.).unsqueeze_end();
         let mask_one: Tensor<B, 3, Bool> = labels.clone().equal_elem(1.).unsqueeze_end();
 
-        point_embedding = Tensor::zeros_like(&point_embedding)
-            .where_self(mask_minus_one.clone(), point_embedding);
+        // In Burn 0.18.0, implement conditional selection manually
+        // Original logic:
+        // 1. Zero out point_embedding where label == -1
+        // 2. Add not_a_point_embed where label == -1
+        // 3. Add point_embeddings[0] where label == 0
+        // 4. Add point_embeddings[1] where label == 1
 
-        point_embedding = Tensor::where_self(
-            point_embedding.clone()
-                + self
-                    .not_a_point_embed
-                    .clone()
-                    .into_record()
-                    .weight
-                    .val()
-                    .unsqueeze(),
-            mask_minus_one,
-            point_embedding,
-        );
-        point_embedding = Tensor::where_self(
-            point_embedding.clone()
-                + self.point_embeddings[0]
-                    .clone()
-                    .into_record()
-                    .weight
-                    .val()
-                    .unsqueeze(),
-            mask_zero,
-            point_embedding,
-        );
-        point_embedding = Tensor::where_self(
-            point_embedding.clone()
-                + self.point_embeddings[1]
-                    .clone()
-                    .into_record()
-                    .weight
-                    .val()
-                    .unsqueeze(),
-            mask_one,
-            point_embedding,
-        );
+        // Convert boolean masks to float for multiplication
+        let mask_minus_one_float = mask_minus_one.clone().float();
+        let mask_zero_float = mask_zero.clone().float();
+        let mask_one_float = mask_one.clone().float();
+
+        // Step 1: Zero out where label == -1
+        // point_embedding * (1 - mask_minus_one) keeps values where mask is false, zeros where true
+        point_embedding = point_embedding
+            * (Tensor::ones_like(&mask_minus_one_float) - mask_minus_one_float.clone());
+
+        // Step 2: Add not_a_point_embed where label == -1
+        let not_a_point_embed_weight = self
+            .not_a_point_embed
+            .clone()
+            .into_record()
+            .weight
+            .val()
+            .unsqueeze();
+        point_embedding =
+            point_embedding.clone() + (not_a_point_embed_weight * mask_minus_one_float);
+
+        // Step 3: Add point_embeddings[0] where label == 0
+        let point_embed_0_weight = self.point_embeddings[0]
+            .clone()
+            .into_record()
+            .weight
+            .val()
+            .unsqueeze();
+        point_embedding = point_embedding.clone() + (point_embed_0_weight * mask_zero_float);
+
+        // Step 4: Add point_embeddings[1] where label == 1
+        let point_embed_1_weight = self.point_embeddings[1]
+            .clone()
+            .into_record()
+            .weight
+            .val()
+            .unsqueeze();
+        point_embedding = point_embedding + (point_embed_1_weight * mask_one_float);
+
         point_embedding
     }
 
@@ -170,8 +180,8 @@ where
             .pe_layer
             .forward_with_coords(coords, self.input_image_size);
 
-        let corner_embedding_0 = Tensor::narrow(&corner_embedding, 1, 0, 1);
-        let corner_embedding_1 = Tensor::narrow(&corner_embedding, 1, 1, 1);
+        let corner_embedding_0 = corner_embedding.clone().narrow(1, 0, 1);
+        let corner_embedding_1 = corner_embedding.narrow(1, 1, 1);
 
         let updated_corner_embedding_0 = corner_embedding_0
             + self.point_embeddings[2]
@@ -245,9 +255,10 @@ where
         points: Option<(Tensor<B, 3>, Tensor<B, 2>)>,
         boxes: Option<Tensor<B, 2>>,
         masks: Option<Tensor<B, 4>>,
+        device: &B::Device,
     ) -> (Tensor<B, 3>, Tensor<B, 4>) {
         let bs = self._get_batch_size(points.clone(), boxes.clone(), masks.clone());
-        let mut sparse_embeddings = Tensor::empty([bs, 0, self.embed_dim]);
+        let mut sparse_embeddings = Tensor::empty([bs, 0, self.embed_dim], device);
         if let Some((coords, labels)) = points {
             let point_embeddings = self._embed_points(coords, labels, boxes.is_none());
             sparse_embeddings = Tensor::cat(vec![sparse_embeddings, point_embeddings], 1);
@@ -258,22 +269,24 @@ where
         }
         let dense_embeddings = match masks {
             Some(masks) => self._embed_masks(masks),
-            None => self
-                .no_mask_embed
-                .clone()
-                .into_record()
-                .weight
-                .val()
-                .reshape_max([1, usize::MAX, 1, 1])
-                .expand(
-                    vec![
-                        bs,
-                        usize::MAX, //Todo seems sketchy
-                        self.image_embedding_size.0,
-                        self.image_embedding_size.1,
-                    ],
-                    false,
-                ),
+            None => {
+                // Get the no_mask_embed weight and reshape to [1, embed_dim, 1, 1]
+                let no_mask = self
+                    .no_mask_embed
+                    .clone()
+                    .into_record()
+                    .weight
+                    .val()
+                    .reshape_max([1, usize::MAX, 1, 1]);
+
+                // Expand to [bs, embed_dim, image_embedding_size.0, image_embedding_size.1]
+                // In Burn 0.18.0, use repeat_dim instead of expand
+                let no_mask = no_mask
+                    .repeat_dim(0, bs) // Repeat batch dimension
+                    .repeat_dim(2, self.image_embedding_size.0) // Repeat height dimension
+                    .repeat_dim(3, self.image_embedding_size.1); // Repeat width dimension
+                no_mask
+            }
         };
         (sparse_embeddings, dense_embeddings)
     }
@@ -282,6 +295,8 @@ where
 #[cfg(test)]
 mod test {
 
+    use burn::prelude::Backend;
+    use pyo3::types::PyAnyMethods;
     use pyo3::{types::PyTuple, PyAny, PyResult, Python};
 
     use crate::{
@@ -298,17 +313,18 @@ mod test {
     const MASK_IN_CHANS: usize = 8;
     const EMBED_DIM: usize = 128;
 
-    fn _init() -> PromptEncoder<TestBackend> {
+    fn _init(device: &<TestBackend as Backend>::Device) -> PromptEncoder<TestBackend> {
         let prompt_encoder = PromptEncoder::new(
             EMBED_DIM,
             Size(32, 32),
             Size(512, 512),
             MASK_IN_CHANS,
             Some(Activation::GELU),
+            device,
         );
         prompt_encoder
     }
-    fn get_python_module<'a>(py: &'a Python, file: &str) -> PyResult<&'a PyAny> {
+    fn get_python_module<'a>(py: &'a Python, file: &str) -> PyResult<pyo3::Bound<'a, PyAny>> {
         let gelu = py.import("torch.nn")?.getattr("GELU")?;
         let module = py
             .import("segment_anything.modeling.prompt_encoder")?
@@ -321,14 +337,14 @@ mod test {
         file: &str,
         with_pad: bool,
     ) -> PyResult<(PythonData<3>, PythonData<2>, PythonData<3>)> {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let module = get_python_module(&py, file)?;
 
             let points = random_python_tensor(py, [32, 1, 2])?;
             let labels = random_python_tensor(py, [32, 1])?;
             let output = module
                 .getattr("_embed_points")?
-                .call1((points, labels, with_pad))?;
+                .call1((&points, &labels, with_pad))?;
             Ok((points.try_into()?, labels.try_into()?, output.try_into()?))
         })
     }
@@ -336,7 +352,8 @@ mod test {
     fn test_prompt_encoder_embed_points_pad() {
         const FILE: &str = "prompt_encoder_embed_points_pad";
         let (points, labels, python) = python_embed_points(FILE, true).unwrap();
-        let mut prompt_encoder = _init();
+        let device = Default::default();
+        let mut prompt_encoder = _init(&device);
         prompt_encoder = load_module(FILE, prompt_encoder);
 
         let output = prompt_encoder._embed_points(points.into(), labels.into(), true);
@@ -346,7 +363,8 @@ mod test {
     fn test_prompt_encoder_embed_points_no_pad() {
         const FILE: &str = "prompt_encoder_embed_points_no_pad";
         let (points, labels, python) = python_embed_points(FILE, false).unwrap();
-        let mut prompt_encoder = _init();
+        let device = Default::default();
+        let mut prompt_encoder = _init(&device);
         prompt_encoder = load_module(FILE, prompt_encoder);
 
         let output = prompt_encoder._embed_points(points.into(), labels.into(), false);
@@ -357,16 +375,17 @@ mod test {
     fn test_prompt_encoder_embed_boxes() {
         const FILE: &str = "prompt_encoder_embed_boxes";
         fn python() -> PyResult<(PythonData<2>, PythonData<3>)> {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 let module = get_python_module(&py, FILE)?;
 
                 let boxes = random_python_tensor(py, [32, 4])?;
-                let output = module.call_method1("_embed_boxes", (boxes,))?;
+                let output = module.call_method1("_embed_boxes", (boxes.clone(),))?;
                 Ok((boxes.try_into()?, output.try_into()?))
             })
         }
         let (boxes, python) = python().unwrap();
-        let mut prompt_encoder = _init();
+        let device = Default::default();
+        let mut prompt_encoder = _init(&device);
         prompt_encoder = load_module(FILE, prompt_encoder);
 
         let output = prompt_encoder._embed_boxes(boxes.into());
@@ -377,16 +396,17 @@ mod test {
     fn test_prompt_encoder_embed_masks() {
         const FILE: &str = "prompt_encoder_embed_masks";
         fn python() -> PyResult<(PythonData<4>, PythonData<4>)> {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 let module = get_python_module(&py, FILE)?;
 
                 let masks = random_python_tensor(py, [8, 1, 4, 4])?;
-                let output = module.call_method1("_embed_masks", (masks,))?;
+                let output = module.call_method1("_embed_masks", (masks.clone(),))?;
                 Ok((masks.try_into()?, output.try_into()?))
             })
         }
         let (masks, python) = python().unwrap();
-        let mut prompt_encoder = _init();
+        let device = Default::default();
+        let mut prompt_encoder = _init(&device);
         prompt_encoder = load_module(FILE, prompt_encoder);
 
         let output = prompt_encoder._embed_masks(masks.into());
@@ -397,26 +417,30 @@ mod test {
     fn test_prompt_encoder_forward_points() {
         const FILE: &str = "prompt_encoder_forward_points";
         fn python() -> PyResult<(PythonData<3>, PythonData<2>, PythonData<3>, PythonData<4>)> {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 let module = get_python_module(&py, FILE)?;
                 let points = random_python_tensor(py, [8, 1, 2])?;
                 let labels = random_python_tensor(py, [8, 1])?;
-                let output = module.call_method1(
-                    "forward",
-                    ((points, labels), None::<&PyAny>, None::<&PyAny>),
-                )?;
+                let output =
+                    module.call_method1("forward", ((&points, &labels), py.None(), py.None()))?;
                 let output = output.downcast::<PyTuple>()?;
                 let sparse = output.get_item(0)?;
                 let dense = output.get_item(1)?;
-                Ok((points.try_into()?, labels.try_into()?, sparse.try_into()?, dense.try_into()?))
+                Ok((
+                    points.try_into()?,
+                    labels.try_into()?,
+                    sparse.try_into()?,
+                    dense.try_into()?,
+                ))
             })
         }
         let (points, labels, sparse, dense) = python().unwrap();
-        let mut prompt_encoder = _init();
+        let device = &Default::default();
+        let mut prompt_encoder = _init(device);
         prompt_encoder = load_module(FILE, prompt_encoder);
 
         let (sparse2, dense2) =
-            prompt_encoder.forward(Some((points.into(), labels.into())), None, None);
+            prompt_encoder.forward(Some((points.into(), labels.into())), None, None, device);
         sparse.almost_equal(sparse2, None);
         dense.almost_equal(dense2, None);
     }
@@ -424,13 +448,12 @@ mod test {
     fn test_prompt_encoder_forward_boxes() {
         const FILE: &str = "prompt_encoder_forward_boxes";
         fn python() -> PyResult<(PythonData<2>, PythonData<3>, PythonData<4>)> {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 let module = get_python_module(&py, FILE)?;
                 let boxes = random_python_tensor(py, [8, 4])?;
-                let output =
-                    module
-                        .getattr("forward")?
-                        .call1((None::<&PyAny>, boxes, None::<&PyAny>))?;
+                let output = module
+                    .getattr("forward")?
+                    .call1((py.None(), &boxes, py.None()))?;
                 let output = output.downcast::<PyTuple>()?;
                 let sparse = output.get_item(0)?;
                 let dense = output.get_item(1)?;
@@ -438,9 +461,10 @@ mod test {
             })
         }
         let (boxes, sparse, dense) = python().unwrap();
-        let mut prompt_encoder = _init();
+        let device = &Default::default();
+        let mut prompt_encoder = _init(device);
         prompt_encoder = load_module(FILE, prompt_encoder);
-        let (sparse2, dense2) = prompt_encoder.forward(None, Some(boxes.into()), None);
+        let (sparse2, dense2) = prompt_encoder.forward(None, Some(boxes.into()), None, device);
         sparse.almost_equal(sparse2, None);
         dense.almost_equal(dense2, None);
     }

@@ -8,24 +8,26 @@ use burn::{
 
 #[derive(Debug, Module)]
 pub struct LayerNorm2d<B: Backend> {
-    weight: Param<Tensor<B, 1>>,
-    bias: Param<Tensor<B, 1>>,
-    eps: f32,
+    pub weight: Param<Tensor<B, 1>>,
+    pub bias: Param<Tensor<B, 1>>,
+    pub eps: f32,
 }
 impl<B: Backend> LayerNorm2d<B> {
-    pub fn new(num_channels: usize, eps: Option<f32>) -> Self {
+    pub fn new(num_channels: usize, eps: Option<f32>, device: &B::Device) -> Self {
         let eps = eps.unwrap_or(1e-6);
-        let weight = Tensor::ones([num_channels]);
-        let bias = Tensor::zeros([num_channels]);
+        let weight = Tensor::ones([num_channels], device);
+        let bias = Tensor::zeros([num_channels], device);
         Self {
-            weight: weight.into(),
-            bias: bias.into(),
+            weight: Param::from_tensor(weight),
+            bias: Param::from_tensor(bias),
             eps,
         }
     }
     pub fn forward(&self, x: Tensor<B, 4>) -> Tensor<B, 4> {
         let u = x.clone().mean_dim(1);
-        let s = (x.clone() - u.clone()).powf(2.0).mean_dim(1);
+
+        let diff = x.clone() - u.clone();
+        let s = (diff.clone() * diff).mean_dim(1);
         let x = (x - u) / (s + self.eps).sqrt();
 
         let ws: Tensor<B, 4> = self.weight.val().unsqueeze().swap_dims(4 - 1, 1);
@@ -36,6 +38,7 @@ impl<B: Backend> LayerNorm2d<B> {
 
 #[cfg(test)]
 mod test {
+    use pyo3::types::PyAnyMethods;
     use pyo3::{PyResult, Python};
 
     use crate::{
@@ -48,18 +51,19 @@ mod test {
     #[test]
     fn test_layer_norm_2d() {
         fn python() -> PyResult<(PythonData<4>, PythonData<4>)> {
-            Python::with_gil(|py| {
+            Python::attach(|py| {
                 let module = py
                     .import("segment_anything.modeling.common")?
                     .getattr("LayerNorm2d")?;
                 let layer_norm = module.call1((256, 0.1))?;
                 let input = random_python_tensor(py, [2, 256, 16, 16])?;
-                let output = layer_norm.call1((input,))?;
+                let output = layer_norm.call1((input.clone(),))?;
                 Ok((input.try_into()?, output.try_into()?))
             })
         }
         let (input, python) = python().unwrap();
-        let layer_norm = LayerNorm2d::<TestBackend>::new(256, Some(0.1));
+        let device = Default::default();
+        let layer_norm = LayerNorm2d::<TestBackend>::new(256, Some(0.1), &device);
         let output = layer_norm.forward(input.into());
         python.almost_equal(output, 0.01);
     }

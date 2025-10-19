@@ -25,8 +25,86 @@ pub enum ImageFormat {
     BGR,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Module)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Size(pub usize, pub usize);
+
+// Implement Module for Size so it can be used in Module-derived structs
+// Size is just a configuration parameter, not a trainable module
+impl<B: Backend> burn::module::Module<B> for Size {
+    type Record = SizeRecord;
+
+    fn collect_devices(&self, devices: Vec<B::Device>) -> Vec<B::Device> {
+        devices
+    }
+
+    fn fork(self, _device: &B::Device) -> Self {
+        self
+    }
+
+    fn to_device(self, _device: &B::Device) -> Self {
+        self
+    }
+
+    fn visit<V: burn::module::ModuleVisitor<B>>(&self, _visitor: &mut V) {
+        // No parameters to visit
+    }
+
+    fn map<M: burn::module::ModuleMapper<B>>(self, _mapper: &mut M) -> Self {
+        self
+    }
+
+    fn load_record(self, _record: Self::Record) -> Self {
+        self
+    }
+
+    fn into_record(self) -> Self::Record {
+        SizeRecord(Some((self.0, self.1)))
+    }
+
+    fn num_params(&self) -> usize {
+        0
+    }
+}
+
+impl<B: burn::tensor::backend::AutodiffBackend> burn::module::AutodiffModule<B> for Size {
+    type InnerModule = Size;
+
+    fn valid(&self) -> Self::InnerModule {
+        *self
+    }
+}
+
+impl burn::module::ModuleDisplay for Size {
+    fn format(&self, _passed_settings: burn::module::DisplaySettings) -> String {
+        format!("Size({}, {})", self.0, self.1)
+    }
+}
+
+impl burn::module::ModuleDisplayDefault for Size {
+    fn content(&self, _content: burn::module::Content) -> Option<burn::module::Content> {
+        None
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SizeRecord(pub Option<(usize, usize)>);
+
+impl<B: Backend> burn::record::Record<B> for SizeRecord {
+    type Item<S: burn::record::PrecisionSettings> = SizeRecord;
+
+    fn into_item<S: burn::record::PrecisionSettings>(self) -> Self::Item<S> {
+        self
+    }
+
+    fn from_item<S: burn::record::PrecisionSettings>(
+        item: Self::Item<S>,
+        _device: &B::Device,
+    ) -> Self {
+        item
+    }
+}
+
 impl From<(usize, usize)> for Size {
     fn from((h, w): (usize, usize)) -> Self {
         Self(h, w)
@@ -70,7 +148,7 @@ where
         // );
 
         let image = if image_format != self.model.image_format {
-            image.flip(vec![2]) // idk
+            image.flip([2]) // idk
         } else {
             image.clone()
         };
@@ -102,6 +180,19 @@ where
         self.input_size = Some(Size(shape[2], shape[3]));
         let input_image = self.model.preprocess(transformed_image);
         let features = self.model.image_encoder.forward(input_image);
+        
+        #[cfg(test)]
+        {
+            let features_shape = features.shape();
+            let features_data = features.clone().to_data();
+            let features_vec: Vec<f32> = features_data.to_vec().unwrap();
+            let mean: f32 = features_vec.iter().sum::<f32>() / features_vec.len() as f32;
+            let variance: f32 = features_vec.iter().map(|x| (x - mean).powi(2)).sum::<f32>() / features_vec.len() as f32;
+            let std = variance.sqrt();
+            println!("Rust features shape: {:?}", features_shape);
+            println!("Rust features mean: {}, std: {}", mean, std);
+        }
+        
         self.features = Some(features);
         self.is_image_set = true;
     }
@@ -151,9 +242,23 @@ where
         let (mut coords_torch, mut labels_torch, mut box_torch, mut mask_input_torch) =
             (None, None, None, None);
         if let Some(point_coords) = point_coords {
+            let point_coords_float = point_coords.to_float();
+            
+            #[cfg(test)]
+            {
+                println!("SamPredictor.predict: original coords = {:?}", point_coords.clone().to_data().to_vec::<i64>().unwrap());
+                println!("SamPredictor.predict: original_size = {:?}", self.original_size);
+            }
+            
             let point_coords = self
                 .transfrom
-                .apply_coords(point_coords, self.original_size.unwrap());
+                .apply_coords(point_coords_float, self.original_size.unwrap());
+            
+            #[cfg(test)]
+            {
+                println!("SamPredictor.predict: transformed coords = {:?}", point_coords.clone().to_data().to_vec::<f32>().unwrap());
+            }
+            
             coords_torch = Some(point_coords.unsqueeze());
             labels_torch = Some(
                 point_labels
@@ -163,9 +268,10 @@ where
             );
         }
         if let Some(boxes) = boxes {
+            let boxes_float = boxes.to_float();
             let boxes = self
                 .transfrom
-                .apply_boxes(boxes, self.original_size.unwrap());
+                .apply_boxes(boxes_float, self.original_size.unwrap());
             box_torch = Some(boxes);
         }
         if let Some(mask_input) = mask_input {
@@ -178,10 +284,10 @@ where
             mask_input_torch,
             multimask_output,
         );
-        let mask_values = mask_values.select(0, 0);
-        let masks = masks.select(0, 0);
-        let iou_predictions = iou_predictions.select(0, 0);
-        let low_res_masks = low_res_masks.select(0, 0);
+        let mask_values = mask_values.narrow(0, 0, 1).squeeze(0);
+        let masks = masks.narrow(0, 0, 1).squeeze(0);
+        let iou_predictions = iou_predictions.narrow(0, 0, 1).squeeze(0);
+        let low_res_masks = low_res_masks.narrow(0, 0, 1).squeeze(0);
         (masks, iou_predictions, low_res_masks, mask_values)
     }
     /// Predict masks for the given input prompts, using the currently set image.
@@ -231,7 +337,9 @@ where
             None => None,
         };
         let (sparse_embeddings, dense_embeddings) =
-            self.model.prompt_encoder.forward(point, boxes, mask_input);
+            self.model
+                .prompt_encoder
+                .forward(point, boxes, mask_input, &Default::default());
 
         let (low_res_masks, iou_predictions) = self.model.mask_decoder.forward(
             self.features.clone().unwrap(),
@@ -273,6 +381,8 @@ where
 mod test {
 
     use burn::tensor::{Int, Tensor};
+    use pyo3::types::PyAnyMethods;
+    use pyo3::Bound;
     use pyo3::{types::PyTuple, PyAny, PyResult, Python};
 
     use crate::{
@@ -282,7 +392,8 @@ mod test {
 
     use super::{SamPredictor, Size};
     fn init(image: Option<Tensor<TestBackend, 3, Int>>) -> SamPredictor<TestBackend> {
-        let sam = get_test_sam();
+        let device = Default::default();
+        let sam = get_test_sam(&device);
         let mut predictor = SamPredictor::new(sam);
         if let Some(image) = image {
             predictor.set_image(image, super::ImageFormat::RGB);
@@ -290,21 +401,21 @@ mod test {
 
         predictor
     }
-    fn python_init(
-        py: Python,
+    fn python_init<'a>(
+        py: &'a Python<'a>,
         with_set_image: bool,
-    ) -> PyResult<(&PyAny, Option<PythonData<3, i64>>)> {
-        let sam = get_python_test_sam(&py)?;
+    ) -> PyResult<(Bound<'a, PyAny>, Option<PythonData<3, i64>>)> {
+        let sam = get_python_test_sam(py)?;
         let predictor = py
             .import("segment_anything.predictor")?
             .getattr("SamPredictor")?
             .call1((sam,))?;
         if with_set_image {
             let uint8 = py.import("torch")?.getattr("uint8")?;
-            let image = random_python_tensor(py, [120, 180, 3])?
+            let image = random_python_tensor(*py, [120, 180, 3])?
                 .call_method1("type", (uint8,))?
                 .call_method0("numpy")?;
-            predictor.call_method1("set_image", (image, "RGB"))?;
+            predictor.call_method1("set_image", (&image, "RGB"))?;
             return Ok((predictor, Some(image.try_into()?)));
         }
         Ok((predictor, None))
@@ -313,8 +424,8 @@ mod test {
     #[test]
     fn test_predictor_set_image() {
         let python: PyResult<(PythonData<3, i64>, Size, Size, PythonData<4>)> =
-            Python::with_gil(|py| {
-                let (predictor, image) = python_init(py, true)?;
+            Python::attach(|py| {
+                let (predictor, image) = python_init(&py, true)?;
                 Ok((
                     image.unwrap().try_into()?,
                     predictor.getattr("original_size")?.try_into()?,
@@ -334,10 +445,10 @@ mod test {
     fn test_predictor_set_torch_image() {
         let original_size = (120, 180);
         let python: PyResult<(PythonData<4, i64>, Size, Size, PythonData<4>)> =
-            Python::with_gil(|py| {
-                let (predictor, _) = python_init(py, false)?;
+            Python::attach(|py| {
+                let (predictor, _) = python_init(&py, false)?;
                 let image = random_python_tensor_int(py, [1, 3, 683, 1024])?;
-                predictor.call_method1("set_torch_image", (image, original_size))?;
+                predictor.call_method1("set_torch_image", (&image, original_size))?;
                 Ok((
                     image.try_into()?,
                     predictor.getattr("original_size")?.try_into()?,
@@ -365,23 +476,22 @@ mod test {
             PythonData<1>,
             PythonData<3>,
             PythonData<3>,
-        )> = Python::with_gil(|py| {
-            let (predictor, image) = python_init(py, true)?;
+        )> = Python::attach(|py| {
+            let (predictor, image) = python_init(&py, true)?;
             let point_coords = random_python_tensor(py, [1, 2])?.call_method0("numpy")?;
             let point_labels = random_python_tensor_int(py, [1])?.call_method0("numpy")?;
-            let output = predictor
-                .call_method1(
-                    "predict",
-                    (
-                        point_coords,
-                        point_labels,
-                        None::<&PyAny>,
-                        None::<&PyAny>,
-                        true,
-                        false,
-                    ),
-                )?
-                .downcast::<PyTuple>()?;
+            let result = predictor.call_method1(
+                "predict",
+                (
+                    &point_coords,
+                    &point_labels,
+                    py.None(),
+                    py.None(),
+                    true,
+                    false,
+                ),
+            )?;
+            let output = result.downcast::<PyTuple>()?;
             let masks = output.get_item(0)?;
             let iou_predictions = output.get_item(1)?;
             let low_res_masks = output.get_item(2)?;
@@ -430,23 +540,22 @@ mod test {
             PythonData<2>,
             PythonData<4>,
             PythonData<4>,
-        )> = Python::with_gil(|py| {
-            let (predictor, image) = python_init(py, true)?;
+        )> = Python::attach(|py| {
+            let (predictor, image) = python_init(&py, true)?;
             let point_coords = random_python_tensor_int(py, [1, 1, 2])?;
             let point_labels = random_python_tensor_int(py, [1, 1])?;
-            let output = predictor
-                .call_method1(
-                    "predict_torch",
-                    (
-                        point_coords,
-                        point_labels,
-                        None::<&PyAny>,
-                        None::<&PyAny>,
-                        true,
-                        false,
-                    ),
-                )?
-                .downcast::<PyTuple>()?;
+            let result = predictor.call_method1(
+                "predict_torch",
+                (
+                    &point_coords,
+                    &point_labels,
+                    py.None(),
+                    py.None(),
+                    true,
+                    false,
+                ),
+            )?;
+            let output = result.downcast::<PyTuple>()?;
             let masks = output.get_item(0)?;
             let iou_predictions = output.get_item(1)?;
             let low_res_masks = output.get_item(2)?;

@@ -1,5 +1,5 @@
 use burn::tensor::{
-    backend::Backend, BasicOps, Data, ElementConversion, Int, Shape, Tensor, TensorKind,
+    backend::Backend, BasicOps, ElementConversion, Int, Tensor, TensorData, TensorKind,
 };
 
 pub trait TensorHelpers<B: Backend, const D: usize, K: TensorKind<B> + BasicOps<B>> {
@@ -8,7 +8,11 @@ pub trait TensorHelpers<B: Backend, const D: usize, K: TensorKind<B> + BasicOps<
     fn unsqueeze_end<const D2: usize>(self) -> Tensor<B, D2, K>;
     fn reshape_max<const D2: usize>(&self, dims: [usize; D2]) -> Tensor<B, D2, K>;
 
-    fn of_slice<T: burn::tensor::Element>(slice: Vec<T>, shape: [usize; D]) -> Self
+    fn of_slice<T: burn::tensor::Element>(
+        slice: Vec<T>,
+        shape: [usize; D],
+        device: &B::Device,
+    ) -> Self
     where
         K::Elem: ElementConversion;
     fn to_slice<T: burn::tensor::Element>(&self) -> (Vec<T>, [usize; D])
@@ -45,27 +49,36 @@ impl<B: Backend, const D: usize, K: TensorKind<B> + BasicOps<B>> TensorHelpers<B
             dims[i] = match i < D {
                 true => i + diff,
                 false => i - D,
-            }
+            } as isize
         }
         let tensor = tensor.permute(dims);
         tensor
     }
-    fn of_slice<T: burn::tensor::Element>(slice: Vec<T>, shape: [usize; D]) -> Self
+    fn of_slice<T: burn::tensor::Element>(
+        slice: Vec<T>,
+        shape: [usize; D],
+        device: &B::Device,
+    ) -> Self
     where
         K::Elem: ElementConversion,
     {
-        let slice = slice.into_iter().map(|x| K::Elem::from_elem(x)).collect();
-        let data = Data::new(slice, Shape::new(shape));
-        Tensor::from_data(data)
+        let slice: Vec<K::Elem> = slice.into_iter().map(|x| K::Elem::from_elem(x)).collect();
+        let data = TensorData::new(slice, shape);
+        Tensor::from_data(data, device)
     }
     fn to_slice<T: burn::tensor::Element>(&self) -> (Vec<T>, [usize; D])
     where
         K::Elem: ElementConversion,
     {
         let data = self.to_data();
-        let value = data.value.into_iter().map(|x| x.elem()).collect();
-        let shape = data.shape.dims;
-        (value, shape)
+        let slice: Vec<T> = data
+            .as_slice::<K::Elem>()
+            .unwrap()
+            .iter()
+            .map(|x| x.elem())
+            .collect();
+        let shape: [usize; D] = data.shape.try_into().expect("Shape dimension mismatch");
+        (slice, shape)
     }
 }
 
@@ -74,7 +87,8 @@ pub trait ToFloat<B: Backend, const D: usize> {
 }
 impl<B: Backend, const D: usize> ToFloat<B, D> for Tensor<B, D, Int> {
     fn to_float(&self) -> Tensor<B, D> {
-        let (slice, shape) = self.clone().to_slice::<f32>();
-        Tensor::of_slice(slice, shape)
+        let device = self.device();
+        let (slice, shape) = self.to_slice::<f32>();
+        Tensor::of_slice(slice, shape, &device)
     }
 }

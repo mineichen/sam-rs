@@ -1,9 +1,12 @@
-use pyo3::{types::PyModule, Py, PyAny, PyResult, Python};
+use pyo3::{
+    types::{PyAnyMethods, PyModule},
+    Py, PyAny, PyResult, Python,
+};
 
-pub fn module_to_file(file: &str, py: Python, module: &PyAny) -> PyResult<()> {
+pub fn module_to_file(file: &str, py: Python, module: &pyo3::Bound<'_, PyAny>) -> PyResult<()> {
     let fun: Py<PyAny> = PyModule::from_code(
         py,
-        r#"
+        cr#"
 import uuid
 import os
 import json
@@ -78,7 +81,8 @@ sequences = ["neck", "output_upscaling", "mask_downscaling"]
 
 def module_to_file(file_name: str, model: nn.Module):
     data = {}
-    params = model.named_parameters()
+    # Use state_dict() instead of named_parameters() to include buffers
+    params = model.state_dict().items()
     for name, param in params:
         for item in transposed:
             if item in name and len(param.shape) == 2:
@@ -108,12 +112,15 @@ def module_to_file(file_name: str, model: nn.Module):
                     )
         param_id = str(uuid.uuid4())
         param_shape = list(param.size())
-        param_value = (
-            param.flatten().type(torch.float64).detach().cpu().numpy().tolist()
-        )
+        # Convert to bytes format for Burn 0.18.0 (f32 little-endian)
+        import struct
+        param_array = param.flatten().type(torch.float32).detach().cpu().numpy()
+        param_bytes = []
+        for value in param_array:
+            param_bytes.extend(struct.pack('<f', float(value)))
         param_data = {
             "id": param_id,
-            "param": {"value": param_value, "shape": param_shape},
+            "param": {"bytes": param_bytes, "shape": param_shape, "dtype": "F32"},
         }
 
         dpath.new(data, name.replace(".", "/"), param_data)
@@ -121,12 +128,13 @@ def module_to_file(file_name: str, model: nn.Module):
     json_data = {
         "metadata": {
             "float": "f32",
-            "int": "f32",
-            "format": "burn_core::record::file::PrettyJsonFileRecorderSIMD<burn_core::record::settings::FullPrecisionSettings>",
-            "version": "0.8.0",
+            "int": "i32",
+            "format": "burn_core::record::file::PrettyJsonFileRecorder<burn_core::record::settings::FullPrecisionSettings>",
+            "version": "0.18.0",
             "settings": "FullPrecisionSettings"
         },
         "item": {**ignored, **data},
+        "_b": None,
     }
     path = "~/Documents/sam-models/" + file_name + ".json"
     path = os.path.expanduser(path)
@@ -135,8 +143,8 @@ def module_to_file(file_name: str, model: nn.Module):
         json.dump(json_data, json_file)
         
     "#,
-        "",
-        "",
+        c"",
+        c"",
     )?
     .getattr("module_to_file")?
     .into();
