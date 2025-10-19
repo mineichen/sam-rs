@@ -1,7 +1,6 @@
 #[cfg(test)]
 mod test {
     extern crate ndarray;
-    extern crate opencv;
 
     use std::path::Path;
 
@@ -17,7 +16,7 @@ mod test {
     use crate::tests::helpers::{get_python_sam, get_sam, TestBackend};
 
     #[test]
-    // #[ignore]
+    #[ignore]
     fn test_prediction() {
         let image_path = "../images/dog.jpg";
         let version = SamVersion::VitB;
@@ -257,9 +256,7 @@ mod test {
         mask_values: &Tensor<TestBackend, 3>, // High-res logits at image resolution
         postfix: &str,
     ) {
-        use opencv::core::Vector;
-        use opencv::core::{Mat, CV_8UC3};
-        use opencv::imgcodecs::{imwrite, IMWRITE_PNG_COMPRESSION};
+        use image::{ImageBuffer, Rgb};
 
         // Get image dimensions [H, W, C] - load_image returns in this format
         let image_shape = image.shape();
@@ -321,8 +318,9 @@ mod test {
         // Sigmoid function to convert logits to probabilities [0, 1]
         let sigmoid = |x: f32| 1.0 / (1.0 + (-x).exp());
 
-        // Create output image: blend based on confidence (sigmoid of mask_values)
-        let mut output_vec = Vec::with_capacity(height * width * 3);
+        // Create output image buffer
+        let mut img_buffer = ImageBuffer::new(width as u32, height as u32);
+
         for i in 0..height {
             for j in 0..width {
                 let pixel_idx = i * width + j;
@@ -338,37 +336,13 @@ mod test {
                 let b =
                     (image_vec[img_idx + 2] as f32 * confidence + 255.0 * (1.0 - confidence)) as u8;
 
-                // OpenCV expects BGR format, so swap R and B
-                output_vec.push(b);
-                output_vec.push(g);
-                output_vec.push(r);
+                img_buffer.put_pixel(j as u32, i as u32, Rgb([r, g, b]));
             }
         }
 
-        // Create OpenCV Mat and save
-        use opencv::core::Vec3b;
-        use opencv::prelude::MatTrait;
-
-        let mut mat = unsafe { Mat::new_rows_cols(height as i32, width as i32, CV_8UC3).unwrap() };
-
-        // Fill the Mat with our data
-        for i in 0..height {
-            for j in 0..width {
-                let idx = (i * width + j) * 3;
-                let pixel =
-                    Vec3b::from([output_vec[idx], output_vec[idx + 1], output_vec[idx + 2]]);
-                *mat.at_2d_mut::<Vec3b>(i as i32, j as i32).unwrap() = pixel;
-            }
-        }
-
-        // Generate output filename with postfix
+        // Generate output filename with postfix and save
         let output_path = get_prediction_output_path(original_path, postfix);
-
-        let mut params = Vector::new();
-        params.push(IMWRITE_PNG_COMPRESSION);
-        params.push(9);
-
-        imwrite(output_path.to_str().unwrap(), &mat, &params).unwrap();
+        img_buffer.save(&output_path).unwrap();
         println!("Saved prediction to: {}", output_path.display());
     }
     fn get_prediction_output_path(original_path: &str, postfix: &str) -> std::path::PathBuf {

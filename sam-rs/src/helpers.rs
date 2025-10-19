@@ -1,42 +1,20 @@
 use burn::tensor::{backend::Backend, Int, Tensor};
 // use onnxruntime::{environment::Environment, session::Session, GraphOptimizationLevel};
-use opencv::{
-    core::{self, Vec3b},
-    imgcodecs, imgproc,
-    prelude::{Mat, MatTraitConst},
-};
+use image::ImageReader;
 
 use crate::{burn_helpers::TensorHelpers, sam_predictor::Size};
 
 pub fn load_image<B: Backend>(image_path: &str, device: &B::Device) -> (Tensor<B, 3, Int>, Size) {
-    let image = imgcodecs::imread(image_path, imgcodecs::IMREAD_COLOR).unwrap();
-    // Convert BGR to RGB by swapping channels
-    let mut rgb_image = Mat::default();
-    imgproc::cvt_color(
-        &image,
-        &mut rgb_image,
-        imgproc::COLOR_BGR2RGB,
-        0,
-        core::AlgorithmHint::ALGO_HINT_DEFAULT,
-    )
-    .unwrap_or_else(|_| {
-        // If color conversion fails, just use the original image
-        rgb_image = image;
-    });
+    let img = ImageReader::open(image_path)
+        .unwrap()
+        .decode()
+        .unwrap()
+        .to_rgb8();
 
-    let size = rgb_image.size().unwrap();
-    let size = Size(size.height as usize, size.width as usize);
+    let (width, height) = img.dimensions();
+    let size = Size(height as usize, width as usize);
 
-    let mut slice = Vec::with_capacity(size.0 * size.1 * 3);
-
-    for row in 0..size.0 {
-        for col in 0..size.1 {
-            let pixel: Vec3b = *rgb_image.at_2d(row as i32, col as i32).unwrap();
-            for value in pixel {
-                slice.push(value as i32);
-            }
-        }
-    }
+    let slice = img.into_vec();
     let shape = [size.0, size.1, 3];
     let image = Tensor::of_slice(slice, shape, device);
     (image, size)
@@ -62,10 +40,26 @@ mod test {
     }
     #[test]
     fn test_image_loading() {
-        let file = "../images/truck.jpg";
-        let python_image = load_python_image(file).unwrap();
+        use tempfile::Builder;
+
+        // Load JPEG with image crate and save to temporary PNG, as Opencv and image decoding jpg is not exactly the same
+        let original_file = "../images/truck.jpg";
+        let img = image::ImageReader::open(original_file)
+            .unwrap()
+            .decode()
+            .unwrap();
+
+        // Create temp file with .png extension
+        let temp_file = Builder::new().suffix(".png").tempfile().unwrap();
+        let temp_path = temp_file.path();
+        img.save(temp_path).unwrap();
+
+        // Now load the PNG with both Python and Rust - should be identical
+        let python_image = load_python_image(temp_path.to_str().unwrap()).unwrap();
         let device = Default::default();
-        let (image, _) = load_image::<TestBackend>(file, &device);
+        let (image, _) = load_image::<TestBackend>(temp_path.to_str().unwrap(), &device);
+
+        // PNG is lossless, so both decoders should produce identical results
         python_image.almost_equal(image, None);
     }
 }

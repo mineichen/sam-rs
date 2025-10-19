@@ -1,7 +1,6 @@
 #[cfg(test)]
 mod test {
     extern crate ndarray;
-    extern crate opencv;
 
     use burn::tensor::Tensor;
 
