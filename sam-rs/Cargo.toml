@@ -5,15 +5,18 @@ edition = "2021"
 
 [dependencies]
 burn.workspace = true
-burn-ndarray.workspace = true
-burn-wgpu.workspace = true
 image = "0.25.8"
-ndarray = "0.16.1"
-# onnxruntime = { git = "https://github.com/karelnagel/onnxruntime-rs" }
-pyo3 = { version = "0.26.0", features = ["auto-initialize"] }
+pyo3 = { version = "0.26.0", features = ["auto-initialize"], optional = true }
 serde = { version = "1.0.200", features = ["derive"] }
 tracing = "0.1.40"
 tracing-subscriber = "0.3.18"
 
 [dev-dependencies]
+sam-rs = { path = ".", features = ["pyo3"] }
 tempfile = "3.14.0"
+burn-ndarray.workspace = true
+ndarray = "0.16.1"
+
+[features]
+default = []
+pyo3 = ["dep:pyo3"]

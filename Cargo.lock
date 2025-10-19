@@ -4195,6 +4195,7 @@ name = "sam-convert"
 version = "0.1.0"
 dependencies = [
  "burn",
+ "burn-ndarray",
  "pyo3",
  "regex",
  "sam-rs",
@@ -4207,10 +4208,10 @@ version = "0.1.0"
 dependencies = [
  "burn",
  "burn-ndarray",
- "burn-wgpu",
  "image",
  "ndarray",
  "pyo3",
+ "sam-rs",
  "serde",
  "tempfile",
  "tracing",

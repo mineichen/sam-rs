@@ -2,6 +2,7 @@ pub mod build_sam;
 pub mod burn_helpers;
 pub mod helpers;
 pub mod modeling;
+#[cfg(feature = "pyo3")]
 pub mod python;
 pub mod sam;
 pub mod sam_predictor;

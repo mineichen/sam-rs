@@ -2,9 +2,8 @@ use burn::{
     module::Module,
     record::{BinGzFileRecorder, FullPrecisionSettings, Recorder},
 };
-use sam_rs::{
-    build_sam::SamVersion, python::recorder::load_module_from_python, tests::helpers::TestBackend,
-};
+use burn_ndarray::NdArray;
+use sam_rs::{build_sam::SamVersion, python::recorder::load_module_from_python};
 use std::{env, path::Path, time::Instant};
 
 fn main() {
@@ -19,7 +18,7 @@ fn main() {
 
     let start = Instant::now();
 
-    let sam = version.build::<TestBackend>(None, &Default::default());
+    let sam = version.build::<NdArray<f32>>(None, &Default::default());
     let sam = load_module_from_python(sam, version, file).unwrap();
 
     println!("Saving module in rust...");

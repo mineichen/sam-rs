@@ -16,7 +16,7 @@ mod test {
     use crate::tests::helpers::{get_python_sam, get_sam, TestBackend};
 
     #[test]
-    #[ignore]
+    //#[ignore]
     fn test_prediction() {
         let image_path = "../images/dog.jpg";
         let version = SamVersion::VitB;
@@ -50,8 +50,9 @@ mod test {
             let predictor = py
                 .import("segment_anything.predictor")?
                 .call_method1("SamPredictor", (sam,))?;
-
+            println!("Got Python predictor");
             predictor.call_method1("set_image", (&image,))?;
+            println!("After set_image");
             let np = py.import("numpy")?;
             let input_point = np.call_method1("array", (vec![inputs.clone()],))?;
             let input_label = np

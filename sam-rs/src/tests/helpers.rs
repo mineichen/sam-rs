@@ -5,15 +5,17 @@ use burn::{
     record::{FullPrecisionSettings, PrettyJsonFileRecorder, Recorder},
     tensor::backend::Backend,
 };
-use burn_ndarray::NdArray;
+#[cfg(feature = "pyo3")]
 use pyo3::prelude::PyAnyMethods;
+#[cfg(feature = "pyo3")]
 use pyo3::{PyAny, PyResult, Python};
 
 use crate::{build_sam::SamVersion, sam::Sam};
 
 pub const TEST_ALMOST_THRESHOLD: f32 = 0.01;
 // Using NdArray backend for tests (CPU-based, doesn't require GPU)
-pub type TestBackend = NdArray<f32>;
+#[cfg(test)]
+pub type TestBackend = burn_ndarray::NdArray<f32>;
 pub const TEST_CHECKPOINT: &str = "../sam-convert/sam_test";
 pub const TEST_SAM: SamVersion = SamVersion::Test;
 
@@ -28,11 +30,13 @@ where
     let sam = version.build::<B>(checkpoint, &device);
     sam
 }
+#[cfg(test)]
 pub fn get_test_sam(device: &<TestBackend as Backend>::Device) -> Sam<TestBackend> {
     // Don't load checkpoint for tests - use random weights
     get_sam(TEST_SAM, None, device)
 }
 
+#[cfg(feature = "pyo3")]
 pub fn get_python_sam<'a>(
     py: &'a Python,
     version: SamVersion,
@@ -54,6 +58,7 @@ pub fn get_python_sam<'a>(
     Ok(module)
 }
 
+#[cfg(feature = "pyo3")]
 pub fn get_python_test_sam<'a>(py: &'a Python) -> PyResult<pyo3::Bound<'a, PyAny>> {
     get_python_sam(&py, TEST_SAM, None)
 }

@@ -6,7 +6,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-sam-rs = { path = "../sam-rs" }
+sam-rs = { path = "../sam-rs", features = ["pyo3"] }
+burn-ndarray.workspace = true
 burn.workspace = true
 pyo3 = { version = "0.26.0", features = ["auto-initialize"] }
 serde = "1.0.200"
