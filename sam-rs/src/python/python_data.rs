@@ -146,24 +146,30 @@ where
 
 pub fn pyany_to_tensor<'a, B: Backend, const D: usize, K: TensorKind<B> + BasicOps<B>>(
     data: Bound<'a, PyAny>,
+    device: &B::Device,
 ) -> Tensor<B, D, K>
 where
     <K as BasicOps<B>>::Elem: ElementConversion,
 {
     let data: PythonData<D> = data.try_into().unwrap();
-    let tensor: Tensor<B, D, K> = data.try_into().unwrap();
-    tensor
-}
+    let slice = data.slice;
+    let shape = data.shape;
 
-impl<B: Backend, const D: usize, T: PythonDataKind, K: TensorKind<B> + BasicOps<B>>
-    From<PythonData<D, T>> for Tensor<B, D, K>
+    Tensor::collect_shaped(slice, shape, device)
+}
+#[cfg(test)]
+use crate::tests::helpers::TestBackend;
+
+#[cfg(test)]
+impl<const D: usize, T: PythonDataKind, K: TensorKind<TestBackend> + BasicOps<TestBackend>>
+    From<PythonData<D, T>> for Tensor<TestBackend, D, K>
 where
-    <K as BasicOps<B>>::Elem: ElementConversion,
+    <K as BasicOps<TestBackend>>::Elem: ElementConversion,
 {
     fn from(data: PythonData<D, T>) -> Self {
         let slice = data.slice;
         let shape = data.shape;
-        let device = B::Device::default();
+        let device = <TestBackend as Backend>::Device::default();
         Tensor::collect_shaped(slice, shape, &device)
     }
 }

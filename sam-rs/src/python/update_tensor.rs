@@ -1,11 +1,12 @@
 use std::borrow::BorrowMut;
 
-use crate::python::python_data::pyany_to_tensor;
 use burn::{
     module::Param,
     tensor::{backend::Backend, Tensor},
 };
 use pyo3::{Bound, PyAny};
+
+use crate::python::python_data::pyany_to_tensor;
 
 pub fn _print_match_key(key: &str) {
     match key.contains("bias") || key.contains("rel_pos_h") || key.contains("rel_pos_w") {
@@ -44,10 +45,11 @@ fn set_value<B: Backend, const D: usize>(
     new: Bound<PyAny>,
     key: &str,
 ) {
-    let mut new = pyany_to_tensor(new);
+    let mut new = pyany_to_tensor(new, &old.device());
     if needs_transpose(key) {
         new = new.transpose();
     }
+
     assert_eq!(old.dims(), new.dims(), "Dims not same for: {key}");
     *old = Param::from_tensor(new);
 }
@@ -56,17 +58,14 @@ fn set_value_opt<B: Backend, const D: usize>(
     new: Bound<PyAny>,
     key: &str,
 ) {
-    let mut new = pyany_to_tensor(new);
+    let old_ref = old
+        .as_ref()
+        .expect(format!("There is no tensor for {key}").as_str());
+    let mut new = pyany_to_tensor(new, &old_ref.device());
     if needs_transpose(key) {
         new = new.transpose();
     }
-    assert_eq!(
-        old.as_ref()
-            .expect(format!("There is no tensor for {key}").as_str())
-            .dims(),
-        new.dims(),
-        "Dims not same for: {key}"
-    );
+    assert_eq!(old_ref.dims(), new.dims(), "Dims not same for: {key}");
     *old = Some(Param::from_tensor(new));
 }
 
@@ -1559,13 +1558,14 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "prompt_encoder.pe_layer.positional_encoding_gaussian_matrix" => {
-            let new_tensor: Tensor<B, 2> = pyany_to_tensor(value);
-            *sam.prompt_encoder
+        "prompt_encoder.pe_layer.positional_encoding_gaussian_matrix" => set_value(
+            sam.prompt_encoder
                 .pe_layer
                 .positional_encoding_gaussian_matrix
-                .borrow_mut() = Param::from_tensor(new_tensor);
-        }
+                .borrow_mut(),
+            value,
+            key,
+        ),
         "image_encoder.blocks[10].norm1.beta" => set_value_opt(
             sam.image_encoder.blocks[10].norm1.beta.borrow_mut(),
             value,
