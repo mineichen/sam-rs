@@ -208,9 +208,9 @@ mod test {
 
                 let input = random_python_tensor(py, [2, 256, 16, 16])?;
                 let output = module.call1((&input, 16))?;
-                let output = output.downcast::<PyTuple>()?;
+                let output = output.cast::<PyTuple>()?;
                 let size = output.get_item(1)?;
-                let size = size.downcast::<PyTuple>()?;
+                let size = size.cast::<PyTuple>()?;
                 let size = Size(size.get_item(0)?.extract()?, size.get_item(1)?.extract()?);
                 Ok((input.try_into()?, output.get_item(0)?.try_into()?, size))
             })

@@ -119,22 +119,28 @@ impl<const D: usize, T: PythonDataKind> PythonData<D, T> {
     }
 }
 
+fn extract_python_data<'py, T>(data: &pyo3::Bound<'py, PyAny>) -> PyResult<Vec<T>>
+where
+    Vec<T>: for<'a, 'b> FromPyObject<'a, 'b, Error = PyErr>,
+{
+    data.getattr("flatten")?
+        .call0()?
+        .getattr("tolist")?
+        .call0()?
+        .extract()
+}
+
 impl<'py, const D: usize, T: PythonDataKind> TryFrom<pyo3::Bound<'py, PyAny>> for PythonData<D, T>
 where
-    Vec<T>: FromPyObject<'py>,
+    Vec<T>: for<'a, 'b> FromPyObject<'a, 'b, Error = PyErr>,
 {
     type Error = PyErr;
     fn try_from(data: pyo3::Bound<'py, PyAny>) -> PyResult<Self> {
-        let slice = data
-            .getattr("flatten")?
-            .call0()?
-            .getattr("tolist")?
-            .call0()?
-            .extract::<Vec<T>>()?;
+        let slice = extract_python_data(&data)?;
         let shape = data.getattr("shape")?.extract::<Vec<usize>>()?;
         assert_eq!(D, shape.len(), "Shape length doesn't match");
         let shape = shape.try_into().unwrap();
-        Ok(PythonData::new(slice.to_vec(), shape))
+        Ok(PythonData::new(slice, shape))
     }
 }
 
@@ -176,7 +182,7 @@ where
 impl<'py> TryFrom<pyo3::Bound<'py, PyAny>> for Size {
     type Error = PyErr;
     fn try_from(data: pyo3::Bound<'py, PyAny>) -> PyResult<Self> {
-        let tuple = data.downcast::<PyTuple>()?;
+        let tuple = data.cast::<PyTuple>()?;
         Ok(Size(
             tuple.get_item(0)?.extract()?,
             tuple.get_item(1)?.extract()?,

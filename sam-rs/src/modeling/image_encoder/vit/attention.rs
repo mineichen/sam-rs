@@ -84,9 +84,9 @@ impl<B: Backend> Attention<B> {
             .reshape_max([b, h * w, 3, self.num_heads, usize::MAX])
             .permute([2, 0, 3, 1, 4]);
         let qkv = qkv.reshape_max([3, b * self.num_heads, h * w, usize::MAX]);
-        let q = qkv.clone().narrow(0, 0, 1).squeeze::<3>(0);
-        let k = qkv.clone().narrow(0, 1, 1).squeeze::<3>(0);
-        let v = qkv.narrow(0, 2, 1).squeeze::<3>(0);
+        let q = qkv.clone().narrow(0, 0, 1).squeeze::<3>();
+        let k = qkv.clone().narrow(0, 1, 1).squeeze::<3>();
+        let v = qkv.narrow(0, 2, 1).squeeze::<3>();
 
         let mut attn = (q.clone() * self.scale).matmul(k.transpose());
         if self.use_rel_pos {
@@ -147,8 +147,8 @@ fn add_decomposed_rel_pos<B: Backend>(
     // Result for each hi: [b, q_w, k_h]
     let mut rel_h_slices: Vec<Tensor<B, 4>> = Vec::with_capacity(q_h);
     for hi in 0..q_h {
-        let r_q_slice: Tensor<B, 3> = r_q.clone().narrow(1, hi, 1).squeeze::<3>(1); // [b, q_w, dim]
-        let rh_slice: Tensor<B, 2> = rh.clone().narrow(0, hi, 1).squeeze::<2>(0); // [k_h, dim]
+        let r_q_slice: Tensor<B, 3> = r_q.clone().narrow(1, hi, 1).squeeze::<3>(); // [b, q_w, dim]
+        let rh_slice: Tensor<B, 2> = rh.clone().narrow(0, hi, 1).squeeze::<2>(); // [k_h, dim]
         let rh_slice_t: Tensor<B, 2> = rh_slice.transpose(); // [dim, k_h]
                                                              // Broadcast rh_slice_t to match batch dimension: repeat for each batch
         let rh_slice_broadcast = rh_slice_t.clone().unsqueeze().repeat_dim(0, b); // [b, dim, k_h]
@@ -166,8 +166,8 @@ fn add_decomposed_rel_pos<B: Backend>(
     // Result for each wi: [b, q_h, k_w]
     let mut rel_w_slices: Vec<Tensor<B, 4>> = Vec::with_capacity(q_w);
     for wi in 0..q_w {
-        let r_q_slice: Tensor<B, 3> = r_q.clone().narrow(2, wi, 1).squeeze::<3>(2); // [b, q_h, dim]
-        let rw_slice: Tensor<B, 2> = rw.clone().narrow(0, wi, 1).squeeze::<2>(0); // [k_w, dim]
+        let r_q_slice: Tensor<B, 3> = r_q.clone().narrow(2, wi, 1).squeeze::<3>(); // [b, q_h, dim]
+        let rw_slice: Tensor<B, 2> = rw.clone().narrow(0, wi, 1).squeeze::<2>(); // [k_w, dim]
         let rw_slice_t: Tensor<B, 2> = rw_slice.transpose(); // [dim, k_w]
                                                              // Broadcast rw_slice_t to match batch dimension: repeat for each batch
         let rw_slice_broadcast = rw_slice_t.clone().unsqueeze().repeat_dim(0, b); // [b, dim, k_w]

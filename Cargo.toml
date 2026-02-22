@@ -4,6 +4,6 @@ resolver = "2"
 members = ["sam-rs", "sam-convert"]
 
 [workspace.dependencies]
-burn = "0.18.0"
-burn-ndarray = "0.18.0"
-burn-wgpu = "0.18.0"
+burn = "0.20.1"
+burn-ndarray = "0.20.1"
+burn-wgpu = "0.20.1"

@@ -136,7 +136,7 @@ mod test {
                         pyo3::types::PyNone::get(py),
                     ),
                 )?;
-            let embeddings_output = embeddings_output.downcast::<PyTuple>()?;
+            let embeddings_output = embeddings_output.cast::<PyTuple>()?;
             let sparse_embeddings = embeddings_output.get_item(0)?;
             let dense_embeddings = embeddings_output.get_item(1)?;
 
@@ -145,7 +145,7 @@ mod test {
             kwargs.set_item("point_labels", input_label)?;
             kwargs.set_item("multimask_output", true)?;
             let output = predictor.call_method("predict", (), Some(&kwargs))?;
-            let output = output.downcast::<PyTuple>()?;
+            let output = output.cast::<PyTuple>()?;
 
             let _masks = output.get_item(0)?;
             let scores = output.get_item(1)?;
@@ -188,8 +188,8 @@ mod test {
             true,
         );
 
-        scores_py.almost_equal(iou_predictions.squeeze(0), None);
-        logits_py.almost_equal(low_res_masks.squeeze(0), None);
+        scores_py.almost_equal(iou_predictions.squeeze(), None);
+        logits_py.almost_equal(low_res_masks.squeeze(), None);
     }
 
     #[test]
@@ -273,7 +273,7 @@ mod test {
             kwargs.set_item("point_labels", input_label)?;
             kwargs.set_item("multimask_output", true)?;
             let output = predictor.call_method("predict", (), Some(&kwargs))?;
-            let output = output.downcast::<PyTuple>()?;
+            let output = output.cast::<PyTuple>()?;
 
             let masks = output.get_item(0)?;
             let scores = output.get_item(1)?;

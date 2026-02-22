@@ -294,10 +294,10 @@ where
             mask_input_torch,
             multimask_output,
         );
-        let mask_values = mask_values.narrow(0, 0, 1).squeeze(0);
-        let masks = masks.narrow(0, 0, 1).squeeze(0);
-        let iou_predictions = iou_predictions.narrow(0, 0, 1).squeeze(0);
-        let low_res_masks = low_res_masks.narrow(0, 0, 1).squeeze(0);
+        let mask_values = mask_values.narrow(0, 0, 1).squeeze();
+        let masks = masks.narrow(0, 0, 1).squeeze();
+        let iou_predictions = iou_predictions.narrow(0, 0, 1).squeeze();
+        let low_res_masks = low_res_masks.narrow(0, 0, 1).squeeze();
         (masks, iou_predictions, low_res_masks, mask_values)
     }
     /// Predict masks for the given input prompts, using the currently set image.
@@ -509,7 +509,7 @@ mod test {
                     false,
                 ),
             )?;
-            let output = result.downcast::<PyTuple>()?;
+            let output = result.cast::<PyTuple>()?;
             let iou_predictions: PythonData<1> = output.get_item(1)?.try_into()?;
             let low_res_masks: PythonData<3> = output.get_item(2)?.try_into()?;
             let mask_values: PythonData<3> = output.get_item(3)?.try_into()?;
@@ -571,7 +571,7 @@ mod test {
                     false,
                 ),
             )?;
-            let output = result.downcast::<PyTuple>()?;
+            let output = result.cast::<PyTuple>()?;
             let iou_predictions: PythonData<2> = output.get_item(1)?.try_into()?;
             let low_res_masks: PythonData<4> = output.get_item(2)?.try_into()?;
             let mask_values: PythonData<4> = output.get_item(3)?.try_into()?;

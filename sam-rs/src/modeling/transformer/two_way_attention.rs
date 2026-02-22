@@ -166,7 +166,7 @@ mod test {
                 let query_pe = random_python_tensor(py, [1, 256, 256])?;
                 let key_pe = random_python_tensor(py, [1, 256, 256])?;
                 let output = module.call1((&queries, &keys, &query_pe, &key_pe))?;
-                let output = output.downcast::<PyTuple>()?;
+                let output = output.cast::<PyTuple>()?;
                 let out_queries = output.get_item(0)?;
                 let out_keys = output.get_item(1)?;
                 Ok((

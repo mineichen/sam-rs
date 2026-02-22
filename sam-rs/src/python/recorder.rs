@@ -142,7 +142,7 @@ pub fn get_python_map<'a>(sam: Bound<'a, PyAny>) -> PyResult<HashMap<String, Bou
     let items = items.try_iter()?;
     for item in items {
         let item_bound = item?;
-        let item_tuple = item_bound.downcast::<PyTuple>()?;
+        let item_tuple = item_bound.cast::<PyTuple>()?;
         let key = item_tuple.get_item(0)?.extract::<String>()?;
 
         let key = key_replacer(key);

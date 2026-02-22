@@ -423,7 +423,7 @@ mod test {
                 let labels = random_python_tensor(py, [8, 1])?;
                 let output =
                     module.call_method1("forward", ((&points, &labels), py.None(), py.None()))?;
-                let output = output.downcast::<PyTuple>()?;
+                let output = output.cast::<PyTuple>()?;
                 let sparse = output.get_item(0)?;
                 let dense = output.get_item(1)?;
                 Ok((
@@ -454,7 +454,7 @@ mod test {
                 let output = module
                     .getattr("forward")?
                     .call1((py.None(), &boxes, py.None()))?;
-                let output = output.downcast::<PyTuple>()?;
+                let output = output.cast::<PyTuple>()?;
                 let sparse = output.get_item(0)?;
                 let dense = output.get_item(1)?;
                 Ok((boxes.try_into()?, sparse.try_into()?, dense.try_into()?))

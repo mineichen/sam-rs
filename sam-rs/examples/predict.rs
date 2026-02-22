@@ -71,7 +71,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         elapsed()
     );
 
-    let best_mask = masks.narrow(0, best_idx, 1).squeeze::<2>(0);
+    let best_mask = masks.narrow(0, best_idx, 1).squeeze::<2>();
     let mask_data = best_mask.to_data();
     let mask_slice = mask_data.as_slice::<bool>().unwrap();
 

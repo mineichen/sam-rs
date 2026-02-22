@@ -315,7 +315,7 @@ mod test {
     use pyo3::types::{PyAnyMethods, PyDictMethods, PyListMethods};
     use pyo3::{
         types::{PyDict, PyList},
-        PyResult, Python,
+        Python,
     };
 
     use crate::{
@@ -344,7 +344,7 @@ mod test {
 
             let output = sam
                 .call1(([kwargs], false))?
-                .downcast::<PyList>()?
+                .cast::<PyList>()?
                 .get_item(0)?;
             let mask_values: PythonData<4> = output.get_item("mask_values")?.try_into()?;
             let iou_predictions: PythonData<2> = output.get_item("iou_predictions")?.try_into()?;
@@ -393,7 +393,7 @@ mod test {
 
             let output = sam
                 .call1(([kwargs], false))?
-                .downcast::<PyList>()?
+                .cast::<PyList>()?
                 .get_item(0)?;
             let mask_values: PythonData<4> = output.get_item("mask_values")?.try_into()?;
             let iou_predictions: PythonData<2> = output.get_item("iou_predictions")?.try_into()?;

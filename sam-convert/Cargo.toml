@@ -9,9 +9,6 @@ edition = "2021"
 sam-rs = { path = "../sam-rs", features = ["pyo3"] }
 burn-ndarray.workspace = true
 burn.workspace = true
-pyo3 = { version = "0.26.0", features = ["auto-initialize"] }
-serde = "1.0.200"
-regex = "1.10.4"
-
-[profile.release]
-strip = true
+pyo3 = { version = "0.28.2", features = ["auto-initialize"] }
+serde = "1.0.228"
+regex = "1.12.3"

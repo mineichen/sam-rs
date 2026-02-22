@@ -15,7 +15,7 @@ use burn::{
 #[derive(Debug, Module)]
 pub struct Conv2dBN<B: Backend> {
     pub c: Conv2d<B>,
-    pub bn: BatchNorm<B, 2>,
+    pub bn: BatchNorm<B>,
 }
 
 impl<B: Backend> Conv2dBN<B> {

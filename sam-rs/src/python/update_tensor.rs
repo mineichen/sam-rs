@@ -171,7 +171,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[8].norm1.beta" => set_value(
+        "image_encoder.blocks[8].norm1.beta" => set_value_opt(
             sam.image_encoder.blocks[8].norm1.beta.borrow_mut(),
             value,
             key,
@@ -201,12 +201,12 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
                 key,
             )
         }
-        "image_encoder.blocks[1].norm2.beta" => set_value(
+        "image_encoder.blocks[1].norm2.beta" => set_value_opt(
             sam.image_encoder.blocks[1].norm2.beta.borrow_mut(),
             value,
             key,
         ),
-        "mask_decoder.transformer.layers[0].norm1.beta" => set_value(
+        "mask_decoder.transformer.layers[0].norm1.beta" => set_value_opt(
             sam.mask_decoder.transformer.layers[0]
                 .norm1
                 .beta
@@ -277,12 +277,12 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[7].norm1.beta" => set_value(
+        "image_encoder.blocks[7].norm1.beta" => set_value_opt(
             sam.image_encoder.blocks[7].norm1.beta.borrow_mut(),
             value,
             key,
         ),
-        "image_encoder.blocks[2].norm2.beta" => set_value(
+        "image_encoder.blocks[2].norm2.beta" => set_value_opt(
             sam.image_encoder.blocks[2].norm2.beta.borrow_mut(),
             value,
             key,
@@ -316,7 +316,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "mask_decoder.transformer.layers[0].norm4.beta" => set_value(
+        "mask_decoder.transformer.layers[0].norm4.beta" => set_value_opt(
             sam.mask_decoder.transformer.layers[0]
                 .norm4
                 .beta
@@ -400,7 +400,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "mask_decoder.transformer.layers[0].norm3.beta" => set_value(
+        "mask_decoder.transformer.layers[0].norm3.beta" => set_value_opt(
             sam.mask_decoder.transformer.layers[0]
                 .norm3
                 .beta
@@ -457,7 +457,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
                 key,
             )
         }
-        "image_encoder.blocks[5].norm2.beta" => set_value(
+        "image_encoder.blocks[5].norm2.beta" => set_value_opt(
             sam.image_encoder.blocks[5].norm2.beta.borrow_mut(),
             value,
             key,
@@ -499,7 +499,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[9].norm2.beta" => set_value(
+        "image_encoder.blocks[9].norm2.beta" => set_value_opt(
             sam.image_encoder.blocks[9].norm2.beta.borrow_mut(),
             value,
             key,
@@ -664,7 +664,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[6].norm2.beta" => set_value(
+        "image_encoder.blocks[6].norm2.beta" => set_value_opt(
             sam.image_encoder.blocks[6].norm2.beta.borrow_mut(),
             value,
             key,
@@ -712,7 +712,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[1].norm1.beta" => set_value(
+        "image_encoder.blocks[1].norm1.beta" => set_value_opt(
             sam.image_encoder.blocks[1].norm1.beta.borrow_mut(),
             value,
             key,
@@ -790,7 +790,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[6].norm1.beta" => set_value(
+        "image_encoder.blocks[6].norm1.beta" => set_value_opt(
             sam.image_encoder.blocks[6].norm1.beta.borrow_mut(),
             value,
             key,
@@ -863,7 +863,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[11].norm2.beta" => set_value(
+        "image_encoder.blocks[11].norm2.beta" => set_value_opt(
             sam.image_encoder.blocks[11].norm2.beta.borrow_mut(),
             value,
             key,
@@ -880,7 +880,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[10].norm2.beta" => set_value(
+        "image_encoder.blocks[10].norm2.beta" => set_value_opt(
             sam.image_encoder.blocks[10].norm2.beta.borrow_mut(),
             value,
             key,
@@ -975,7 +975,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "mask_decoder.transformer.layers[1].norm4.beta" => set_value(
+        "mask_decoder.transformer.layers[1].norm4.beta" => set_value_opt(
             sam.mask_decoder.transformer.layers[1]
                 .norm4
                 .beta
@@ -1108,7 +1108,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "mask_decoder.transformer.layers[1].norm2.beta" => set_value(
+        "mask_decoder.transformer.layers[1].norm2.beta" => set_value_opt(
             sam.mask_decoder.transformer.layers[1]
                 .norm2
                 .beta
@@ -1116,7 +1116,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[2].norm1.beta" => set_value(
+        "image_encoder.blocks[2].norm1.beta" => set_value_opt(
             sam.image_encoder.blocks[2].norm1.beta.borrow_mut(),
             value,
             key,
@@ -1143,7 +1143,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
         "image_encoder.neck1.bias" => {
             set_value(sam.image_encoder.neck1.bias.borrow_mut(), value, key)
         }
-        "mask_decoder.transformer.norm_final_attn.beta" => set_value(
+        "mask_decoder.transformer.norm_final_attn.beta" => set_value_opt(
             sam.mask_decoder
                 .transformer
                 .norm_final_attn
@@ -1152,7 +1152,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[3].norm1.beta" => set_value(
+        "image_encoder.blocks[3].norm1.beta" => set_value_opt(
             sam.image_encoder.blocks[3].norm1.beta.borrow_mut(),
             value,
             key,
@@ -1182,7 +1182,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[7].norm2.beta" => set_value(
+        "image_encoder.blocks[7].norm2.beta" => set_value_opt(
             sam.image_encoder.blocks[7].norm2.beta.borrow_mut(),
             value,
             key,
@@ -1317,7 +1317,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
                 key,
             )
         }
-        "image_encoder.blocks[5].norm1.beta" => set_value(
+        "image_encoder.blocks[5].norm1.beta" => set_value_opt(
             sam.image_encoder.blocks[5].norm1.beta.borrow_mut(),
             value,
             key,
@@ -1462,7 +1462,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[3].norm2.beta" => set_value(
+        "image_encoder.blocks[3].norm2.beta" => set_value_opt(
             sam.image_encoder.blocks[3].norm2.beta.borrow_mut(),
             value,
             key,
@@ -1477,7 +1477,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[4].norm2.beta" => set_value(
+        "image_encoder.blocks[4].norm2.beta" => set_value_opt(
             sam.image_encoder.blocks[4].norm2.beta.borrow_mut(),
             value,
             key,
@@ -1546,7 +1546,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "mask_decoder.transformer.layers[1].norm3.beta" => set_value(
+        "mask_decoder.transformer.layers[1].norm3.beta" => set_value_opt(
             sam.mask_decoder.transformer.layers[1]
                 .norm3
                 .beta
@@ -1566,7 +1566,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
                 .positional_encoding_gaussian_matrix
                 .borrow_mut() = Param::from_tensor(new_tensor);
         }
-        "image_encoder.blocks[10].norm1.beta" => set_value(
+        "image_encoder.blocks[10].norm1.beta" => set_value_opt(
             sam.image_encoder.blocks[10].norm1.beta.borrow_mut(),
             value,
             key,
@@ -1745,7 +1745,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "mask_decoder.transformer.layers[0].norm2.beta" => set_value(
+        "mask_decoder.transformer.layers[0].norm2.beta" => set_value_opt(
             sam.mask_decoder.transformer.layers[0]
                 .norm2
                 .beta
@@ -1793,7 +1793,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[0].norm2.beta" => set_value(
+        "image_encoder.blocks[0].norm2.beta" => set_value_opt(
             sam.image_encoder.blocks[0].norm2.beta.borrow_mut(),
             value,
             key,
@@ -1860,7 +1860,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[4].norm1.beta" => set_value(
+        "image_encoder.blocks[4].norm1.beta" => set_value_opt(
             sam.image_encoder.blocks[4].norm1.beta.borrow_mut(),
             value,
             key,
@@ -1901,7 +1901,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[9].norm1.beta" => set_value(
+        "image_encoder.blocks[9].norm1.beta" => set_value_opt(
             sam.image_encoder.blocks[9].norm1.beta.borrow_mut(),
             value,
             key,
@@ -1916,7 +1916,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[11].norm1.beta" => set_value(
+        "image_encoder.blocks[11].norm1.beta" => set_value_opt(
             sam.image_encoder.blocks[11].norm1.beta.borrow_mut(),
             value,
             key,
@@ -1971,7 +1971,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "mask_decoder.transformer.layers[1].norm1.beta" => set_value(
+        "mask_decoder.transformer.layers[1].norm1.beta" => set_value_opt(
             sam.mask_decoder.transformer.layers[1]
                 .norm1
                 .beta
@@ -2010,7 +2010,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[8].norm2.beta" => set_value(
+        "image_encoder.blocks[8].norm2.beta" => set_value_opt(
             sam.image_encoder.blocks[8].norm2.beta.borrow_mut(),
             value,
             key,
@@ -2020,7 +2020,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[0].norm1.beta" => set_value(
+        "image_encoder.blocks[0].norm1.beta" => set_value_opt(
             sam.image_encoder.blocks[0].norm1.beta.borrow_mut(),
             value,
             key,
@@ -2126,7 +2126,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[19].norm1.beta" => set_value(
+        "image_encoder.blocks[19].norm1.beta" => set_value_opt(
             sam.image_encoder.blocks[19].norm1.beta.borrow_mut(),
             value,
             key,
@@ -2136,7 +2136,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[24].norm1.beta" => set_value(
+        "image_encoder.blocks[24].norm1.beta" => set_value_opt(
             sam.image_encoder.blocks[24].norm1.beta.borrow_mut(),
             value,
             key,
@@ -2221,7 +2221,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[14].norm2.beta" => set_value(
+        "image_encoder.blocks[14].norm2.beta" => set_value_opt(
             sam.image_encoder.blocks[14].norm2.beta.borrow_mut(),
             value,
             key,
@@ -2301,7 +2301,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[25].norm2.beta" => set_value(
+        "image_encoder.blocks[25].norm2.beta" => set_value_opt(
             sam.image_encoder.blocks[25].norm2.beta.borrow_mut(),
             value,
             key,
@@ -2366,7 +2366,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[25].norm1.beta" => set_value(
+        "image_encoder.blocks[25].norm1.beta" => set_value_opt(
             sam.image_encoder.blocks[25].norm1.beta.borrow_mut(),
             value,
             key,
@@ -2391,7 +2391,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[21].norm1.beta" => set_value(
+        "image_encoder.blocks[21].norm1.beta" => set_value_opt(
             sam.image_encoder.blocks[21].norm1.beta.borrow_mut(),
             value,
             key,
@@ -2486,7 +2486,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[15].norm2.beta" => set_value(
+        "image_encoder.blocks[15].norm2.beta" => set_value_opt(
             sam.image_encoder.blocks[15].norm2.beta.borrow_mut(),
             value,
             key,
@@ -2501,7 +2501,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[31].norm2.beta" => set_value(
+        "image_encoder.blocks[31].norm2.beta" => set_value_opt(
             sam.image_encoder.blocks[31].norm2.beta.borrow_mut(),
             value,
             key,
@@ -2561,7 +2561,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[17].norm2.beta" => set_value(
+        "image_encoder.blocks[17].norm2.beta" => set_value_opt(
             sam.image_encoder.blocks[17].norm2.beta.borrow_mut(),
             value,
             key,
@@ -2581,7 +2581,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[24].norm2.beta" => set_value(
+        "image_encoder.blocks[24].norm2.beta" => set_value_opt(
             sam.image_encoder.blocks[24].norm2.beta.borrow_mut(),
             value,
             key,
@@ -2606,7 +2606,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[23].norm2.beta" => set_value(
+        "image_encoder.blocks[23].norm2.beta" => set_value_opt(
             sam.image_encoder.blocks[23].norm2.beta.borrow_mut(),
             value,
             key,
@@ -2646,7 +2646,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[28].norm1.beta" => set_value(
+        "image_encoder.blocks[28].norm1.beta" => set_value_opt(
             sam.image_encoder.blocks[28].norm1.beta.borrow_mut(),
             value,
             key,
@@ -2661,7 +2661,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[28].norm2.beta" => set_value(
+        "image_encoder.blocks[28].norm2.beta" => set_value_opt(
             sam.image_encoder.blocks[28].norm2.beta.borrow_mut(),
             value,
             key,
@@ -2721,7 +2721,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[15].norm1.beta" => set_value(
+        "image_encoder.blocks[15].norm1.beta" => set_value_opt(
             sam.image_encoder.blocks[15].norm1.beta.borrow_mut(),
             value,
             key,
@@ -2736,7 +2736,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[30].norm2.beta" => set_value(
+        "image_encoder.blocks[30].norm2.beta" => set_value_opt(
             sam.image_encoder.blocks[30].norm2.beta.borrow_mut(),
             value,
             key,
@@ -2746,7 +2746,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[20].norm1.beta" => set_value(
+        "image_encoder.blocks[20].norm1.beta" => set_value_opt(
             sam.image_encoder.blocks[20].norm1.beta.borrow_mut(),
             value,
             key,
@@ -2796,7 +2796,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[26].norm2.beta" => set_value(
+        "image_encoder.blocks[26].norm2.beta" => set_value_opt(
             sam.image_encoder.blocks[26].norm2.beta.borrow_mut(),
             value,
             key,
@@ -2851,7 +2851,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[16].norm1.beta" => set_value(
+        "image_encoder.blocks[16].norm1.beta" => set_value_opt(
             sam.image_encoder.blocks[16].norm1.beta.borrow_mut(),
             value,
             key,
@@ -2871,7 +2871,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[16].norm2.beta" => set_value(
+        "image_encoder.blocks[16].norm2.beta" => set_value_opt(
             sam.image_encoder.blocks[16].norm2.beta.borrow_mut(),
             value,
             key,
@@ -2886,17 +2886,17 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[22].norm2.beta" => set_value(
+        "image_encoder.blocks[22].norm2.beta" => set_value_opt(
             sam.image_encoder.blocks[22].norm2.beta.borrow_mut(),
             value,
             key,
         ),
-        "image_encoder.blocks[18].norm1.beta" => set_value(
+        "image_encoder.blocks[18].norm1.beta" => set_value_opt(
             sam.image_encoder.blocks[18].norm1.beta.borrow_mut(),
             value,
             key,
         ),
-        "image_encoder.blocks[23].norm1.beta" => set_value(
+        "image_encoder.blocks[23].norm1.beta" => set_value_opt(
             sam.image_encoder.blocks[23].norm1.beta.borrow_mut(),
             value,
             key,
@@ -2946,7 +2946,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[21].norm2.beta" => set_value(
+        "image_encoder.blocks[21].norm2.beta" => set_value_opt(
             sam.image_encoder.blocks[21].norm2.beta.borrow_mut(),
             value,
             key,
@@ -2956,7 +2956,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[27].norm2.beta" => set_value(
+        "image_encoder.blocks[27].norm2.beta" => set_value_opt(
             sam.image_encoder.blocks[27].norm2.beta.borrow_mut(),
             value,
             key,
@@ -2966,7 +2966,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[22].norm1.beta" => set_value(
+        "image_encoder.blocks[22].norm1.beta" => set_value_opt(
             sam.image_encoder.blocks[22].norm1.beta.borrow_mut(),
             value,
             key,
@@ -3006,12 +3006,12 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[19].norm2.beta" => set_value(
+        "image_encoder.blocks[19].norm2.beta" => set_value_opt(
             sam.image_encoder.blocks[19].norm2.beta.borrow_mut(),
             value,
             key,
         ),
-        "image_encoder.blocks[17].norm1.beta" => set_value(
+        "image_encoder.blocks[17].norm1.beta" => set_value_opt(
             sam.image_encoder.blocks[17].norm1.beta.borrow_mut(),
             value,
             key,
@@ -3031,7 +3031,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[13].norm1.beta" => set_value(
+        "image_encoder.blocks[13].norm1.beta" => set_value_opt(
             sam.image_encoder.blocks[13].norm1.beta.borrow_mut(),
             value,
             key,
@@ -3071,7 +3071,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[12].norm1.beta" => set_value(
+        "image_encoder.blocks[12].norm1.beta" => set_value_opt(
             sam.image_encoder.blocks[12].norm1.beta.borrow_mut(),
             value,
             key,
@@ -3121,7 +3121,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[14].norm1.beta" => set_value(
+        "image_encoder.blocks[14].norm1.beta" => set_value_opt(
             sam.image_encoder.blocks[14].norm1.beta.borrow_mut(),
             value,
             key,
@@ -3166,7 +3166,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[18].norm2.beta" => set_value(
+        "image_encoder.blocks[18].norm2.beta" => set_value_opt(
             sam.image_encoder.blocks[18].norm2.beta.borrow_mut(),
             value,
             key,
@@ -3186,7 +3186,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[12].norm2.beta" => set_value(
+        "image_encoder.blocks[12].norm2.beta" => set_value_opt(
             sam.image_encoder.blocks[12].norm2.beta.borrow_mut(),
             value,
             key,
@@ -3196,7 +3196,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[26].norm1.beta" => set_value(
+        "image_encoder.blocks[26].norm1.beta" => set_value_opt(
             sam.image_encoder.blocks[26].norm1.beta.borrow_mut(),
             value,
             key,
@@ -3226,7 +3226,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[30].norm1.beta" => set_value(
+        "image_encoder.blocks[30].norm1.beta" => set_value_opt(
             sam.image_encoder.blocks[30].norm1.beta.borrow_mut(),
             value,
             key,
@@ -3236,7 +3236,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[13].norm2.beta" => set_value(
+        "image_encoder.blocks[13].norm2.beta" => set_value_opt(
             sam.image_encoder.blocks[13].norm2.beta.borrow_mut(),
             value,
             key,
@@ -3256,7 +3256,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[20].norm2.beta" => set_value(
+        "image_encoder.blocks[20].norm2.beta" => set_value_opt(
             sam.image_encoder.blocks[20].norm2.beta.borrow_mut(),
             value,
             key,
@@ -3306,7 +3306,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[31].norm1.beta" => set_value(
+        "image_encoder.blocks[31].norm1.beta" => set_value_opt(
             sam.image_encoder.blocks[31].norm1.beta.borrow_mut(),
             value,
             key,
@@ -3396,7 +3396,7 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[29].norm2.beta" => set_value(
+        "image_encoder.blocks[29].norm2.beta" => set_value_opt(
             sam.image_encoder.blocks[29].norm2.beta.borrow_mut(),
             value,
             key,
@@ -3406,12 +3406,12 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
             value,
             key,
         ),
-        "image_encoder.blocks[27].norm1.beta" => set_value(
+        "image_encoder.blocks[27].norm1.beta" => set_value_opt(
             sam.image_encoder.blocks[27].norm1.beta.borrow_mut(),
             value,
             key,
         ),
-        "image_encoder.blocks[29].norm1.beta" => set_value(
+        "image_encoder.blocks[29].norm1.beta" => set_value_opt(
             sam.image_encoder.blocks[29].norm1.beta.borrow_mut(),
             value,
             key,

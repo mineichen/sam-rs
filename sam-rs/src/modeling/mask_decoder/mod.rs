@@ -262,7 +262,7 @@ mod test {
                     &dense_prompt,
                     true,
                 ))?;
-                let output = output.downcast::<PyTuple>()?;
+                let output = output.cast::<PyTuple>()?;
                 let masks = output.get_item(0)?;
                 let iou_pred = output.get_item(1)?;
                 Ok((
@@ -357,7 +357,7 @@ mod test {
                     "predict_masks",
                     (&image_embedding, &image_pe, &sparse_prompt, &dense_prompt),
                 )?;
-                let output = output.downcast::<PyTuple>()?;
+                let output = output.cast::<PyTuple>()?;
                 let masks = output.get_item(0)?;
                 let iou_pred = output.get_item(1)?;
                 Ok((
