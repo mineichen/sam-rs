@@ -42,7 +42,7 @@ mod test {
     use pyo3::{PyResult, Python};
 
     use crate::{
-        python::python_data::{random_python_tensor, PythonData},
+        python::python_data::{init_torch, random_python_tensor, PythonData},
         tests::helpers::TestBackend,
     };
 
@@ -52,6 +52,8 @@ mod test {
     fn test_layer_norm_2d() {
         fn python() -> PyResult<(PythonData<4>, PythonData<4>)> {
             Python::attach(|py| {
+                init_torch(py, 42)?;
+
                 let module = py
                     .import("segment_anything.modeling.common")?
                     .getattr("LayerNorm2d")?;
@@ -65,6 +67,6 @@ mod test {
         let device = Default::default();
         let layer_norm = LayerNorm2d::<TestBackend>::new(256, Some(0.1), &device);
         let output = layer_norm.forward(input.into());
-        python.almost_equal(output, 0.01);
+        python.almost_equal(output, None);
     }
 }

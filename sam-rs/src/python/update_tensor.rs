@@ -14,18 +14,31 @@ pub fn _print_match_key(key: &str) {
     }
 }
 
-const TRANSPOSED: [&str; 7] = [
+const TRANSPOSED_LINEAR_PROJ: [&str; 10] = [
+    "attn.proj.weight",
+    "out_proj.weight",
+    "q_proj.weight",
+    "k_proj.weight",
+    "v_proj.weight",
+    "qkv.weight",
+    "iou_prediction_head.layers",
+    "output_hypernetworks_mlps",
     "lin1.weight",
     "lin2.weight",
-    "qkv.weight",
-    "proj.weight",
-    "gamma.weight",
-    "stride.weight",
-    "padding.weight",
 ];
 fn needs_transpose(key: &str) -> bool {
-    TRANSPOSED.iter().any(|x| key.contains(x)) || (key.contains("layers") && key.contains("weight"))
+    // Linear layers need transpose (PyTorch: [out, in], Burn: [in, out])
+    // Conv2d layers do NOT need transpose (both use [out, in, H, W])
+    // Bias weights are 1D and should never be transposed
+
+    if key.contains(".bias") {
+        return false;
+    }
+
+    // Check for linear projection patterns
+    TRANSPOSED_LINEAR_PROJ.iter().any(|x| key.contains(x))
 }
+
 fn set_value<B: Backend, const D: usize>(
     old: &mut Param<Tensor<B, D>>,
     new: Bound<PyAny>,
@@ -1548,7 +1561,10 @@ pub fn update_tensor<B: Backend>(sam: &mut crate::sam::Sam<B>, key: &str, value:
         ),
         "prompt_encoder.pe_layer.positional_encoding_gaussian_matrix" => {
             let new_tensor: Tensor<B, 2> = pyany_to_tensor(value);
-            *sam.prompt_encoder.pe_layer.positional_encoding_gaussian_matrix.borrow_mut() = Param::from_tensor(new_tensor);
+            *sam.prompt_encoder
+                .pe_layer
+                .positional_encoding_gaussian_matrix
+                .borrow_mut() = Param::from_tensor(new_tensor);
         }
         "image_encoder.blocks[10].norm1.beta" => set_value(
             sam.image_encoder.blocks[10].norm1.beta.borrow_mut(),

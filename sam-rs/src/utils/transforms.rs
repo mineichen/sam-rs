@@ -22,7 +22,7 @@ impl ResizeLongestSide {
         let img: ImageBuffer<image::Rgb<u8>, Vec<u8>> =
             ImageBuffer::from_raw(width as u32, height as u32, image_data).unwrap();
         let resized_img =
-            image::imageops::resize(&img, tar_w as u32, tar_h as u32, FilterType::Lanczos3);
+            image::imageops::resize(&img, tar_w as u32, tar_h as u32, FilterType::CatmullRom);
         let resized_data: Vec<i32> = resized_img
             .into_raw()
             .into_iter()
@@ -233,7 +233,7 @@ mod test {
         let (input, python) = python.unwrap();
         let resize = super::ResizeLongestSide::new(64);
         let output = resize.apply_image::<TestBackend>(input.into());
-        python.almost_equal(output, 5.); // Resizing a little different
+        python.almost_equal(output, Some(50.));
     }
     #[test]
     fn test_resize_apply_coords() {

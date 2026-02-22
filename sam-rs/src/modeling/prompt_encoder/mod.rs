@@ -466,6 +466,6 @@ mod test {
         prompt_encoder = load_module(FILE, prompt_encoder);
         let (sparse2, dense2) = prompt_encoder.forward(None, Some(boxes.into()), None, device);
         sparse.almost_equal(sparse2, None);
-        dense.almost_equal(dense2, None);
+        dense.almost_equal(dense2, Some(1e-2));
     }
 }

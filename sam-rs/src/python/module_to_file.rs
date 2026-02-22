@@ -64,6 +64,8 @@ transposed = [
 ]
 
 replace = [
+    ["norm.weight", "norm.gamma"],
+    ["norm.bias", "norm.beta"],
     ["norm1.weight", "norm1.gamma"],
     ["norm2.weight", "norm2.gamma"],
     ["norm3.weight", "norm3.gamma"],

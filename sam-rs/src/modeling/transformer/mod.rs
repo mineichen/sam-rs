@@ -176,7 +176,7 @@ mod test {
             image_pe.into(),
             point_embedding.into(),
         );
-        queries.almost_equal(queries2, 5.);
-        keys.almost_equal(keys2, 5.);
+        queries.almost_equal(queries2, None);
+        keys.almost_equal(keys2, None);
     }
 }

@@ -277,6 +277,6 @@ mod test {
         block = load_module(FILE, block);
 
         let output = block.forward(input.into());
-        python.almost_equal(output, 5.);
+        python.almost_equal(output, None);
     }
 }

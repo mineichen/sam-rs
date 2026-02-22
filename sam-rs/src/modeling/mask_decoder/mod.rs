@@ -150,14 +150,14 @@ impl<B: Backend> MaskDecoder<B> {
         let output_tokens = Tensor::cat(vec![ws1, ws2], 0);
         // Use repeat_dim instead of expand for Burn 0.18.0
         let batch_size = sparse_prompt_embeddings.dims()[0];
-        let output_tokens = output_tokens
-            .unsqueeze()
-            .repeat_dim(0, batch_size);
+        let output_tokens = output_tokens.unsqueeze().repeat_dim(0, batch_size);
         let tokens = Tensor::cat(vec![output_tokens, sparse_prompt_embeddings], 1);
 
         // Concatenate image embeddings with dense prompt embeddings
-        let src = image_embeddings.clone() + dense_prompt_embeddings.clone();
-        let pos_src = image_pe.clone();
+        // Need to expand image_embeddings to match batch size of prompts using repeat_interleave
+        let src = image_embeddings.clone()//.repeat_interleave(batch_size, 0)
+            + dense_prompt_embeddings.clone();
+        let pos_src = image_pe.clone(); //.repeat_interleave(batch_size, 0);
 
         let shape = src.dims();
         let (b, c, h, w) = (shape[0], shape[1], shape[2], shape[3]);
@@ -299,6 +299,21 @@ mod test {
             dense_prompt.into(),
             true,
         );
+
+        println!("test_mask_decoder_forward: masks shape {:?}", masks.shape);
+        println!(
+            "test_mask_decoder_forward: masks2 shape {:?}",
+            masks2.shape()
+        );
+        println!(
+            "test_mask_decoder_forward: iou_pred shape {:?}",
+            iou_pred.shape
+        );
+        println!(
+            "test_mask_decoder_forward: iou_pred2 shape {:?}",
+            iou_pred2.shape()
+        );
+
         masks.almost_equal(masks2, 5.);
         iou_pred.almost_equal(iou_pred2, None);
     }

@@ -324,7 +324,7 @@ pub mod test {
         }
         let (input, python) = python().unwrap();
         let output = super::get_rel_pos::<TestBackend>(32, 32, input.into());
-        python.almost_equal(output, 0.1);
+        python.almost_equal(output, None);
     }
 
     #[test]
@@ -366,7 +366,7 @@ pub mod test {
             q_size,
             k_size,
         );
-        python.almost_equal(output, 1.);
+        python.almost_equal(output, None);
     }
 
     #[test]
@@ -401,6 +401,6 @@ pub mod test {
 
         // Forward
         let output = attention.forward(input.into());
-        python.almost_equal(output, 5.);
+        python.almost_equal(output, None);
     }
 }

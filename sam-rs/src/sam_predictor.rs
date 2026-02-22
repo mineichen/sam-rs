@@ -9,13 +9,13 @@ use crate::utils::transforms::ResizeLongestSide;
 
 pub struct SamPredictor<B: Backend> {
     is_image_set: bool,
-    features: Option<Tensor<B, 4>>,
+    pub features: Option<Tensor<B, 4>>,
     orig_h: Option<i64>,
     orig_w: Option<i64>,
     input_h: Option<i64>,
     input_w: Option<i64>,
     input_size: Option<Size>,
-    original_size: Option<Size>,
+    pub original_size: Option<Size>,
     pub model: Sam<B>,
     pub transfrom: ResizeLongestSide,
 }
@@ -180,19 +180,20 @@ where
         self.input_size = Some(Size(shape[2], shape[3]));
         let input_image = self.model.preprocess(transformed_image);
         let features = self.model.image_encoder.forward(input_image);
-        
+
         #[cfg(test)]
         {
             let features_shape = features.shape();
             let features_data = features.clone().to_data();
             let features_vec: Vec<f32> = features_data.to_vec().unwrap();
             let mean: f32 = features_vec.iter().sum::<f32>() / features_vec.len() as f32;
-            let variance: f32 = features_vec.iter().map(|x| (x - mean).powi(2)).sum::<f32>() / features_vec.len() as f32;
+            let variance: f32 = features_vec.iter().map(|x| (x - mean).powi(2)).sum::<f32>()
+                / features_vec.len() as f32;
             let std = variance.sqrt();
             println!("Rust features shape: {:?}", features_shape);
             println!("Rust features mean: {}, std: {}", mean, std);
         }
-        
+
         self.features = Some(features);
         self.is_image_set = true;
     }
@@ -243,22 +244,31 @@ where
             (None, None, None, None);
         if let Some(point_coords) = point_coords {
             let point_coords_float = point_coords.to_float();
-            
+
             #[cfg(test)]
             {
-                println!("SamPredictor.predict: original coords = {:?}", point_coords.clone().to_data().to_vec::<i64>().unwrap());
-                println!("SamPredictor.predict: original_size = {:?}", self.original_size);
+                println!(
+                    "SamPredictor.predict: original coords = {:?}",
+                    point_coords.clone().to_data().to_vec::<i64>().unwrap()
+                );
+                println!(
+                    "SamPredictor.predict: original_size = {:?}",
+                    self.original_size
+                );
             }
-            
+
             let point_coords = self
                 .transfrom
                 .apply_coords(point_coords_float, self.original_size.unwrap());
-            
+
             #[cfg(test)]
             {
-                println!("SamPredictor.predict: transformed coords = {:?}", point_coords.clone().to_data().to_vec::<f32>().unwrap());
+                println!(
+                    "SamPredictor.predict: transformed coords = {:?}",
+                    point_coords.clone().to_data().to_vec::<f32>().unwrap()
+                );
             }
-            
+
             coords_torch = Some(point_coords.unsqueeze());
             labels_torch = Some(
                 point_labels
@@ -380,106 +390,114 @@ where
 #[cfg(test)]
 mod test {
 
-    use burn::tensor::{Int, Tensor};
     use pyo3::types::PyAnyMethods;
-    use pyo3::Bound;
-    use pyo3::{types::PyTuple, PyAny, PyResult, Python};
+    use pyo3::{types::PyTuple, Python};
 
     use crate::{
         python::python_data::{random_python_tensor, random_python_tensor_int, PythonData},
-        tests::helpers::{get_python_test_sam, get_test_sam, TestBackend},
+        tests::helpers::{get_python_test_sam, get_test_sam},
     };
 
-    use super::{SamPredictor, Size};
-    fn init(image: Option<Tensor<TestBackend, 3, Int>>) -> SamPredictor<TestBackend> {
-        let device = Default::default();
-        let sam = get_test_sam(&device);
-        let mut predictor = SamPredictor::new(sam);
-        if let Some(image) = image {
-            predictor.set_image(image, super::ImageFormat::RGB);
-        }
-
-        predictor
-    }
-    fn python_init<'a>(
-        py: &'a Python<'a>,
-        with_set_image: bool,
-    ) -> PyResult<(Bound<'a, PyAny>, Option<PythonData<3, i64>>)> {
-        let sam = get_python_test_sam(py)?;
-        let predictor = py
-            .import("segment_anything.predictor")?
-            .getattr("SamPredictor")?
-            .call1((sam,))?;
-        if with_set_image {
-            let uint8 = py.import("torch")?.getattr("uint8")?;
-            let image = random_python_tensor(*py, [120, 180, 3])?
-                .call_method1("type", (uint8,))?
-                .call_method0("numpy")?;
-            predictor.call_method1("set_image", (&image, "RGB"))?;
-            return Ok((predictor, Some(image.try_into()?)));
-        }
-        Ok((predictor, None))
-    }
+    use super::{ImageFormat, SamPredictor, Size};
 
     #[test]
     fn test_predictor_set_image() {
-        let python: PyResult<(PythonData<3, i64>, Size, Size, PythonData<4>)> =
-            Python::attach(|py| {
-                let (predictor, image) = python_init(&py, true)?;
-                Ok((
-                    image.unwrap().try_into()?,
-                    predictor.getattr("original_size")?.try_into()?,
-                    predictor.getattr("input_size")?.try_into()?,
-                    predictor.getattr("features")?.try_into()?,
-                ))
-            });
-        let (image, original_size, input_size, features) = python.unwrap();
-        let predictor = init(Some(image.into()));
-        assert_eq!(original_size, predictor.original_size.unwrap());
-        assert_eq!(input_size, predictor.input_size.unwrap());
-        features.almost_equal(predictor.features.unwrap(), 5.);
-        assert!(predictor.is_image_set);
+        Python::attach(|py| {
+            let sam = get_python_test_sam(&py)?;
+            let map = crate::python::recorder::get_python_map(sam.clone())?;
+
+            let predictor = py
+                .import("segment_anything.predictor")?
+                .getattr("SamPredictor")?
+                .call1((sam,))?;
+
+            let torch = py.import("torch")?;
+            let uint8 = torch.getattr("uint8")?;
+            let image = random_python_tensor(py, [120, 180, 3])?
+                .call_method1("type", (uint8,))?
+                .call_method0("numpy")?;
+            let image_data: PythonData<3, i64> = image.clone().try_into()?;
+            predictor.call_method1("set_image", (&image, "RGB"))?;
+
+            let original_size: Size = predictor.getattr("original_size")?.try_into()?;
+            let input_size: Size = predictor.getattr("input_size")?.try_into()?;
+            let features: PythonData<4> = predictor.getattr("features")?.try_into()?;
+
+            let device = Default::default();
+            let rust_sam = crate::python::recorder::load_sam(get_test_sam(&device), map);
+            let mut rust_predictor = SamPredictor::new(rust_sam);
+            rust_predictor.set_image(image_data.into(), ImageFormat::RGB);
+
+            assert_eq!(original_size, rust_predictor.original_size.unwrap());
+            assert_eq!(input_size, rust_predictor.input_size.unwrap());
+            // Higher threshold due to different resize interpolation (Python PIL vs Rust image crate)
+            features.almost_equal(rust_predictor.features.unwrap(), Some(1.0));
+            assert!(rust_predictor.is_image_set);
+
+            Ok::<_, pyo3::PyErr>(())
+        })
+        .unwrap();
     }
 
     #[test]
     fn test_predictor_set_torch_image() {
         let original_size = (120, 180);
-        let python: PyResult<(PythonData<4, i64>, Size, Size, PythonData<4>)> =
-            Python::attach(|py| {
-                let (predictor, _) = python_init(&py, false)?;
-                let image = random_python_tensor_int(py, [1, 3, 683, 1024])?;
-                predictor.call_method1("set_torch_image", (&image, original_size))?;
-                Ok((
-                    image.try_into()?,
-                    predictor.getattr("original_size")?.try_into()?,
-                    predictor.getattr("input_size")?.try_into()?,
-                    predictor.getattr("features")?.try_into()?,
-                ))
-            });
-        let (image, original_size, input_size, features) = python.unwrap();
-        let mut predictor = init(None);
+        Python::attach(|py| {
+            let sam = get_python_test_sam(&py)?;
+            let map = crate::python::recorder::get_python_map(sam.clone())?;
 
-        predictor.set_torch_image(image.into(), original_size.into());
-        assert_eq!(original_size, predictor.original_size.unwrap());
-        assert_eq!(input_size, predictor.input_size.unwrap());
-        features.almost_equal(predictor.features.unwrap(), 5.);
-        assert!(predictor.is_image_set);
+            let predictor = py
+                .import("segment_anything.predictor")?
+                .getattr("SamPredictor")?
+                .call1((sam,))?;
+
+            let image = random_python_tensor_int(py, [1, 3, 683, 1024])?;
+            let image_data: PythonData<4, i64> = image.clone().try_into()?;
+            predictor.call_method1("set_torch_image", (&image, original_size))?;
+
+            let original_size_res: Size = predictor.getattr("original_size")?.try_into()?;
+            let input_size: Size = predictor.getattr("input_size")?.try_into()?;
+            let features: PythonData<4> = predictor.getattr("features")?.try_into()?;
+
+            let device = Default::default();
+            let rust_sam = crate::python::recorder::load_sam(get_test_sam(&device), map);
+            let mut rust_predictor = SamPredictor::new(rust_sam);
+            rust_predictor.set_torch_image(image_data.into(), original_size.into());
+
+            assert_eq!(original_size_res, rust_predictor.original_size.unwrap());
+            assert_eq!(input_size, rust_predictor.input_size.unwrap());
+            features.almost_equal(rust_predictor.features.unwrap(), Some(0.02));
+            assert!(rust_predictor.is_image_set);
+
+            Ok::<_, pyo3::PyErr>(())
+        })
+        .unwrap();
     }
 
     #[test]
     fn test_predictor_predict() {
-        let python: PyResult<(
-            PythonData<3, i64>,
-            PythonData<2>,
-            PythonData<1, i64>,
-            PythonData<3>,
-            PythonData<1>,
-            PythonData<3>,
-            PythonData<3>,
-        )> = Python::attach(|py| {
-            let (predictor, image) = python_init(&py, true)?;
+        Python::attach(|py| {
+            let sam = get_python_test_sam(&py)?;
+            let map = crate::python::recorder::get_python_map(sam.clone())?;
+
+            let predictor = py
+                .import("segment_anything.predictor")?
+                .getattr("SamPredictor")?
+                .call1((sam,))?;
+
+            let torch = py.import("torch")?;
+            let uint8 = torch.getattr("uint8")?;
+            let image = random_python_tensor(py, [120, 180, 3])?
+                .call_method1("type", (uint8,))?
+                .call_method0("numpy")?;
+            let image_data: PythonData<3, i64> = image.clone().try_into()?;
+            predictor.call_method1("set_image", (&image, "RGB"))?;
+
             let point_coords = random_python_tensor(py, [1, 2])?.call_method0("numpy")?;
             let point_labels = random_python_tensor_int(py, [1])?.call_method0("numpy")?;
+            let point_coords_data: PythonData<2> = point_coords.clone().try_into()?;
+            let point_labels_data: PythonData<1, i64> = point_labels.clone().try_into()?;
+
             let result = predictor.call_method1(
                 "predict",
                 (
@@ -492,58 +510,56 @@ mod test {
                 ),
             )?;
             let output = result.downcast::<PyTuple>()?;
-            let masks = output.get_item(0)?;
-            let iou_predictions = output.get_item(1)?;
-            let low_res_masks = output.get_item(2)?;
-            let mask_values = output.get_item(3)?;
-            Ok((
-                image.unwrap().try_into()?,
-                point_coords.try_into()?,
-                point_labels.try_into()?,
-                masks.try_into()?,
-                iou_predictions.try_into()?,
-                low_res_masks.try_into()?,
-                mask_values.try_into()?,
-            ))
-        });
-        let (
-            image,
-            point_coords,
-            point_labels,
-            _masks,
-            iou_predictions,
-            low_res_masks,
-            mask_values,
-        ) = python.unwrap();
-        let predictor = init(Some(image.into()));
+            let iou_predictions: PythonData<1> = output.get_item(1)?.try_into()?;
+            let low_res_masks: PythonData<3> = output.get_item(2)?.try_into()?;
+            let mask_values: PythonData<3> = output.get_item(3)?.try_into()?;
 
-        let (_masks2, iou_predictions2, low_res_masks2, mask_values2) = predictor.predict(
-            Some(point_coords.into()),
-            Some(point_labels.into()),
-            None,
-            None,
-            true,
-        );
-        // masks.almost_equal(masks2, None);
-        iou_predictions.almost_equal(iou_predictions2, 5.);
-        low_res_masks.almost_equal(low_res_masks2, 5.);
-        mask_values.almost_equal(mask_values2, 5.);
+            let device = Default::default();
+            let rust_sam = crate::python::recorder::load_sam(get_test_sam(&device), map);
+            let mut rust_predictor = SamPredictor::new(rust_sam);
+            rust_predictor.set_image(image_data.into(), ImageFormat::RGB);
+
+            let (_, iou_predictions2, low_res_masks2, mask_values2) = rust_predictor.predict(
+                Some(point_coords_data.into()),
+                Some(point_labels_data.into()),
+                None,
+                None,
+                true,
+            );
+
+            iou_predictions.almost_equal(iou_predictions2, Some(0.1));
+            low_res_masks.almost_equal(low_res_masks2, Some(0.1));
+            mask_values.almost_equal(mask_values2, Some(0.1));
+
+            Ok::<_, pyo3::PyErr>(())
+        })
+        .unwrap();
     }
 
     #[test]
     fn test_predictor_predict_torch() {
-        let python: PyResult<(
-            PythonData<3, i64>,
-            PythonData<3>,
-            PythonData<2, i64>,
-            PythonData<4>,
-            PythonData<2>,
-            PythonData<4>,
-            PythonData<4>,
-        )> = Python::attach(|py| {
-            let (predictor, image) = python_init(&py, true)?;
+        Python::attach(|py| {
+            let sam = get_python_test_sam(&py)?;
+            let map = crate::python::recorder::get_python_map(sam.clone())?;
+
+            let predictor = py
+                .import("segment_anything.predictor")?
+                .getattr("SamPredictor")?
+                .call1((sam,))?;
+
+            let torch = py.import("torch")?;
+            let uint8 = torch.getattr("uint8")?;
+            let image = random_python_tensor(py, [120, 180, 3])?
+                .call_method1("type", (uint8,))?
+                .call_method0("numpy")?;
+            let image_data: PythonData<3, i64> = image.clone().try_into()?;
+            predictor.call_method1("set_image", (&image, "RGB"))?;
+
             let point_coords = random_python_tensor_int(py, [1, 1, 2])?;
             let point_labels = random_python_tensor_int(py, [1, 1])?;
+            let point_coords_data: PythonData<3, i64> = point_coords.clone().try_into()?;
+            let point_labels_data: PythonData<2, i64> = point_labels.clone().try_into()?;
+
             let result = predictor.call_method1(
                 "predict_torch",
                 (
@@ -556,41 +572,29 @@ mod test {
                 ),
             )?;
             let output = result.downcast::<PyTuple>()?;
-            let masks = output.get_item(0)?;
-            let iou_predictions = output.get_item(1)?;
-            let low_res_masks = output.get_item(2)?;
-            let mask_values = output.get_item(3)?;
-            Ok((
-                image.unwrap().try_into()?,
-                point_coords.try_into()?,
-                point_labels.try_into()?,
-                masks.try_into()?,
-                iou_predictions.try_into()?,
-                low_res_masks.try_into()?,
-                mask_values.try_into()?,
-            ))
-        });
-        let (
-            image,
-            point_coords,
-            point_labels,
-            _masks,
-            iou_predictions,
-            low_res_masks,
-            mask_values,
-        ) = python.unwrap();
-        let predictor = init(Some(image.into()));
+            let iou_predictions: PythonData<2> = output.get_item(1)?.try_into()?;
+            let low_res_masks: PythonData<4> = output.get_item(2)?.try_into()?;
+            let mask_values: PythonData<4> = output.get_item(3)?.try_into()?;
 
-        let (_masks2, iou_predictions2, low_res_masks2, mask_values2) = predictor.predict_torch(
-            Some(point_coords.into()),
-            Some(point_labels.into()),
-            None,
-            None,
-            true,
-        );
-        // masks.almost_equal(masks2, None);
-        iou_predictions.almost_equal(iou_predictions2, 5.);
-        low_res_masks.almost_equal(low_res_masks2, 5.);
-        mask_values.almost_equal(mask_values2, 5.);
+            let device = Default::default();
+            let rust_sam = crate::python::recorder::load_sam(get_test_sam(&device), map);
+            let mut rust_predictor = SamPredictor::new(rust_sam);
+            rust_predictor.set_image(image_data.into(), ImageFormat::RGB);
+
+            let (_, iou_predictions2, low_res_masks2, mask_values2) = rust_predictor.predict_torch(
+                Some(point_coords_data.into()),
+                Some(point_labels_data.into()),
+                None,
+                None,
+                true,
+            );
+
+            iou_predictions.almost_equal(iou_predictions2, Some(0.1));
+            low_res_masks.almost_equal(low_res_masks2, Some(0.1));
+            mask_values.almost_equal(mask_values2, Some(0.1));
+
+            Ok::<_, pyo3::PyErr>(())
+        })
+        .unwrap();
     }
 }

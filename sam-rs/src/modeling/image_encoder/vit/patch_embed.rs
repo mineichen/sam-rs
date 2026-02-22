@@ -87,6 +87,6 @@ mod test {
 
         // Forward
         let output = patch_embed.forward(input.into());
-        python.almost_equal(output, 0.5);
+        python.almost_equal(output, None);
     }
 }

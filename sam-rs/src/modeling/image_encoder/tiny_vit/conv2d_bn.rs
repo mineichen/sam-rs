@@ -65,7 +65,7 @@ mod tests {
     use crate::{
         modeling::image_encoder::tiny_vit::test_helpers::save_module_with_bn_fix,
         python::python_data::{random_python_tensor, PythonData},
-        tests::helpers::{load_module, TestBackend, TEST_ALMOST_THRESHOLD},
+        tests::helpers::{load_module, TestBackend},
     };
     use pyo3::{types::PyAnyMethods, PyResult, Python};
 
@@ -75,8 +75,7 @@ mod tests {
 
         fn python() -> PyResult<(PythonData<4>, PythonData<4>)> {
             Python::attach(|py| {
-                use crate::python::python_data::set_seed;
-                set_seed(py, 42)?;
+                crate::python::python_data::init_torch(py, 42)?;
 
                 // Create Conv2d_BN structure that matches Rust's field names
                 let torch_nn = py.import("torch.nn")?;
@@ -139,7 +138,7 @@ mod tests {
         let output = conv_bn.forward(input.into());
 
         // Compare with Python output
-        python_output.almost_equal(output, Some(TEST_ALMOST_THRESHOLD));
+        python_output.almost_equal(output, None);
     }
 
     #[test]
@@ -148,8 +147,7 @@ mod tests {
 
         fn python() -> PyResult<(PythonData<4>, PythonData<4>)> {
             Python::attach(|py| {
-                use crate::python::python_data::set_seed;
-                set_seed(py, 42)?;
+                crate::python::python_data::init_torch(py, 42)?;
 
                 // Create depthwise convolution (groups=channels)
                 let torch_nn = py.import("torch.nn")?;
@@ -208,7 +206,7 @@ mod tests {
 
         let output = conv_bn.forward(input.into());
 
-        python_output.almost_equal(output, Some(TEST_ALMOST_THRESHOLD));
+        python_output.almost_equal(output, None);
     }
 
     #[test]
@@ -217,8 +215,7 @@ mod tests {
 
         fn python() -> PyResult<(PythonData<4>, PythonData<4>)> {
             Python::attach(|py| {
-                use crate::python::python_data::set_seed;
-                set_seed(py, 42)?;
+                crate::python::python_data::init_torch(py, 42)?;
 
                 // Test 1x1 convolution (point-wise, common in TinyViT)
                 let torch_nn = py.import("torch.nn")?;
@@ -273,6 +270,6 @@ mod tests {
 
         let output = conv_bn.forward(input.into());
 
-        python_output.almost_equal(output, Some(TEST_ALMOST_THRESHOLD));
+        python_output.almost_equal(output, None);
     }
 }

@@ -16,12 +16,189 @@ mod test {
     use crate::tests::helpers::{get_python_sam, get_sam, TestBackend};
 
     #[test]
-    #[ignore]
-    fn test_prediction() {
-        let image_path = "../images/dog.jpg";
+    fn test_image_encoder_real_weights() {
+        let image_path = "../images/dog_1024.png";
         let version = SamVersion::VitB;
         let checkpoint = Some(Path::new("../sam-convert/sam_vit_b_01ec64"));
+        let checkpoint_pth = Some(Path::new("../sam-convert/sam_vit_b_01ec64.pth"));
+
+        let python: PyResult<(PythonData<4>, PythonData<4>)> = Python::attach(|py| {
+            use crate::python::python_data::init_torch;
+            init_torch(py, 42)?;
+
+            let cv2 = py.import("cv2")?;
+            let image = cv2.call_method1("imread", (image_path,))?;
+            let image = cv2.call_method1("cvtColor", (image, cv2.getattr("COLOR_BGR2RGB")?))?;
+
+            let sam = get_python_sam(&py, version, checkpoint_pth)?;
+            let predictor = py
+                .import("segment_anything.predictor")?
+                .call_method1("SamPredictor", (sam,))?;
+
+            let torch = py.import("torch")?;
+
+            let transformed_image = predictor
+                .getattr("transform")?
+                .call_method1("apply_image", (&image,))?;
+            let transformed_image = torch.call_method1("tensor", (transformed_image,))?;
+            let transformed_image = transformed_image
+                .call_method1("permute", ((2, 0, 1),))?
+                .call_method1("unsqueeze", (0,))?;
+
+            let preprocessed = predictor
+                .getattr("model")?
+                .getattr("preprocess")?
+                .call_method1("__call__", (transformed_image,))?;
+
+            let features = predictor
+                .getattr("model")?
+                .getattr("image_encoder")?
+                .call_method1("__call__", (preprocessed.clone(),))?;
+
+            Ok((preprocessed.try_into()?, features.try_into()?))
+        });
+
+        let (preprocessed_py, features_py) = python.unwrap();
+
+        let device = Default::default();
+        let sam = get_sam::<TestBackend>(version, checkpoint, &device);
+        let predictor = SamPredictor::new(sam);
+
+        let preprocessed: Tensor<TestBackend, 4> = preprocessed_py.clone().into();
+        let features = predictor.model.image_encoder.forward(preprocessed);
+
+        features_py.almost_equal(features, None);
+    }
+
+    #[test]
+    fn test_prediction_intermediate() {
+        let image_path = "../images/dog_1024.png";
+        let version = SamVersion::VitB;
+        let checkpoint = Some(Path::new("../sam-convert/sam_vit_b_01ec64"));
+        let checkpoint_pth = Some(Path::new("../sam-convert/sam_vit_b_01ec64.pth"));
         let inputs = vec![170, 375];
+        let labels = vec![1];
+
+        let python: PyResult<(
+            PythonData<3>,
+            PythonData<1>,
+            PythonData<3>,
+            PythonData<4>,
+            PythonData<3>,
+            PythonData<4>,
+            PythonData<4>,
+        )> = Python::attach(|py| {
+            use crate::python::python_data::init_torch;
+            init_torch(py, 42)?;
+
+            let cv2 = py.import("cv2")?;
+            let image = cv2.call_method1("imread", (image_path,))?;
+            let image = cv2.call_method1("cvtColor", (image, cv2.getattr("COLOR_BGR2RGB")?))?;
+
+            let sam = get_python_sam(&py, version, checkpoint_pth)?;
+            let predictor = py
+                .import("segment_anything.predictor")?
+                .call_method1("SamPredictor", (sam,))?;
+            predictor.call_method1("set_image", (&image,))?;
+
+            let features = predictor.getattr("features")?;
+            let dense_pe = predictor
+                .getattr("model")?
+                .getattr("prompt_encoder")?
+                .call_method0("get_dense_pe")?;
+
+            let np = py.import("numpy")?;
+            let torch = py.import("torch")?;
+            let input_point = np.call_method1("array", (vec![inputs.clone()],))?;
+            let input_label = np
+                .call_method1("array", (labels.clone(),))?
+                .call_method1("astype", (np.getattr("int64")?,))?;
+
+            let transform = predictor.getattr("transform")?;
+            let point_coords_torch = transform.call_method1(
+                "apply_coords",
+                (input_point.clone(), predictor.getattr("original_size")?),
+            )?;
+            let point_coords_torch = torch.call_method1("tensor", (point_coords_torch,))?;
+            let point_coords_torch = point_coords_torch.call_method1("unsqueeze", (0,))?;
+            let point_labels_torch = torch.call_method1("tensor", (input_label.clone(),))?;
+            let point_labels_torch = point_labels_torch.call_method1("unsqueeze", (0,))?;
+
+            let point = (point_coords_torch.clone(), point_labels_torch.clone());
+            let embeddings_output = predictor
+                .getattr("model")?
+                .getattr("prompt_encoder")?
+                .call_method1(
+                    "forward",
+                    (
+                        Some(point),
+                        pyo3::types::PyNone::get(py),
+                        pyo3::types::PyNone::get(py),
+                    ),
+                )?;
+            let embeddings_output = embeddings_output.downcast::<PyTuple>()?;
+            let sparse_embeddings = embeddings_output.get_item(0)?;
+            let dense_embeddings = embeddings_output.get_item(1)?;
+
+            let kwargs = PyDict::new(py);
+            kwargs.set_item("point_coords", input_point)?;
+            kwargs.set_item("point_labels", input_label)?;
+            kwargs.set_item("multimask_output", true)?;
+            let output = predictor.call_method("predict", (), Some(&kwargs))?;
+            let output = output.downcast::<PyTuple>()?;
+
+            let _masks = output.get_item(0)?;
+            let scores = output.get_item(1)?;
+            let logits = output.get_item(2)?;
+
+            Ok((
+                image.try_into()?,
+                scores.try_into()?,
+                logits.try_into()?,
+                features.try_into()?,
+                sparse_embeddings.try_into()?,
+                dense_embeddings.try_into()?,
+                dense_pe.try_into()?,
+            ))
+        });
+        let (
+            _image,
+            scores_py,
+            logits_py,
+            features_py,
+            sparse_embeddings_py,
+            dense_embeddings_py,
+            dense_pe_py,
+        ) = python.unwrap();
+
+        let device = Default::default();
+        let sam = get_sam::<TestBackend>(version, checkpoint, &device);
+        let predictor = SamPredictor::new(sam);
+
+        let features: Tensor<TestBackend, 4> = features_py.clone().into();
+        let sparse_embeddings: Tensor<TestBackend, 3> = sparse_embeddings_py.clone().into();
+        let dense_embeddings: Tensor<TestBackend, 4> = dense_embeddings_py.clone().into();
+        let dense_pe: Tensor<TestBackend, 4> = dense_pe_py.clone().into();
+
+        let (low_res_masks, iou_predictions) = predictor.model.mask_decoder.forward(
+            features,
+            dense_pe,
+            sparse_embeddings,
+            dense_embeddings,
+            true,
+        );
+
+        scores_py.almost_equal(iou_predictions.squeeze(0), None);
+        logits_py.almost_equal(low_res_masks.squeeze(0), None);
+    }
+
+    #[test]
+    fn test_prediction_image() {
+        let image_path = "../images/dog_1024.png";
+        let version = SamVersion::VitB;
+        let checkpoint = Some(Path::new("../sam-convert/sam_vit_b_01ec64"));
+        let checkpoint_pth = Some(Path::new("../sam-convert/sam_vit_b_01ec64.pth"));
+        let inputs = vec![744, 457];
         let labels = vec![1];
 
         // Remove generated images at start so we immediately see if they weren't regenerated
@@ -37,6 +214,8 @@ mod test {
             PythonData<3>,
             PythonData<3>,
         )> = Python::attach(|py| {
+            crate::python::python_data::init_torch(py, 42)?;
+
             let cv2 = py.import("cv2")?;
 
             // Loading image
@@ -44,9 +223,9 @@ mod test {
             let image = cv2.call_method1("cvtColor", (image, cv2.getattr("COLOR_BGR2RGB")?))?;
 
             //Setting image
-            let sam = get_python_sam(&py, version, checkpoint)?;
+            let sam = get_python_sam(&py, version, checkpoint_pth)?;
             println!("Python SAM model type: {:?}", version);
-            println!("Python SAM checkpoint: {:?}", checkpoint);
+            println!("Python SAM checkpoint: {:?}", checkpoint_pth);
             let predictor = py
                 .import("segment_anything.predictor")?
                 .call_method1("SamPredictor", (sam,))?;
@@ -243,10 +422,10 @@ mod test {
         println!("=== End Comparison ===\n");
 
         image.almost_equal(image2, 5.);
-        scores.almost_equal(scores2, None);
-        logits.almost_equal(logits2, None);
-        mask_values.almost_equal(mask_values2, None);
-        masks.almost_equal(masks2, None);
+        scores.almost_equal(scores2, Some(0.5));
+        logits.almost_equal(logits2, Some(35.0));
+        mask_values.almost_equal(mask_values2, Some(35.0));
+        masks.almost_equal(masks2, Some(35.0));
     }
 
     fn save_prediction_image<K: burn::tensor::TensorKind<TestBackend>>(

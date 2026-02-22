@@ -60,6 +60,6 @@ pub mod test {
 
         // Forward
         let output = mlp_block.forward(input.into());
-        python.almost_equal(output, 0.5);
+        python.almost_equal(output, None);
     }
 }

@@ -117,6 +117,6 @@ mod test {
         attention = load_module(FILE, attention);
 
         let output = attention.forward(q.into(), k.into(), v.into());
-        python.almost_equal(output, 5.);
+        python.almost_equal(output, None);
     }
 }

@@ -129,7 +129,7 @@ mod test {
             super::PositionEmbeddingRandom::new(Some(128), None, &device);
 
         let output = pos_embedding._pe_encoding(input.into());
-        python.almost_equal(output, 0.5);
+        python.almost_equal(output, None);
     }
 
     #[test]
@@ -151,7 +151,7 @@ mod test {
             super::PositionEmbeddingRandom::new(Some(128), None, &device);
 
         let output = pos_embedding.forward(Size(64, 64));
-        python.almost_equal(output, 1.);
+        python.almost_equal(output, None);
     }
 
     #[test]
@@ -174,7 +174,7 @@ mod test {
         let pos_embedding: super::PositionEmbeddingRandom<TestBackend> =
             super::PositionEmbeddingRandom::new(Some(128), None, &device);
         let output = pos_embedding.forward_with_coords(input.into(), Size(1024, 1024));
-        python.almost_equal(output, 0.1);
+        python.almost_equal(output, None);
     }
 }
 

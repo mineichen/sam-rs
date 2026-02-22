@@ -108,7 +108,7 @@ mod tests {
             create_conv2d_bn_dict, save_module_with_bn_fix,
         },
         python::python_data::{random_python_tensor, PythonData},
-        tests::helpers::{load_module, TestBackend, TEST_ALMOST_THRESHOLD},
+        tests::helpers::{load_module, TestBackend},
     };
     use pyo3::{types::PyAnyMethods, PyResult, Python};
 
@@ -118,8 +118,8 @@ mod tests {
 
         fn python() -> PyResult<(PythonData<4>, PythonData<4>)> {
             Python::attach(|py| {
-                use crate::python::python_data::set_seed;
-                set_seed(py, 42)?;
+                use crate::python::python_data::init_torch;
+                init_torch(py, 42)?;
 
                 let torch_nn = py.import("torch.nn")?;
 
@@ -223,6 +223,6 @@ mod tests {
 
         let output = mbconv.forward(input.into());
 
-        python_output.almost_equal(output, Some(TEST_ALMOST_THRESHOLD));
+        python_output.almost_equal(output, None);
     }
 }

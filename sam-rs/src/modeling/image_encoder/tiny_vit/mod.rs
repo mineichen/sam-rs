@@ -1,3 +1,4 @@
+pub mod attention;
 pub mod conv2d_bn;
 pub mod mbconv;
 pub mod patch_embed;

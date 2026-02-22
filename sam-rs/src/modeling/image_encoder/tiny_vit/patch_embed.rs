@@ -92,8 +92,8 @@ mod tests {
 
         fn python() -> PyResult<(PythonData<4>, PythonData<4>)> {
             Python::attach(|py| {
-                use crate::python::python_data::set_seed;
-                set_seed(py, 42)?;
+                use crate::python::python_data::init_torch;
+                init_torch(py, 42)?;
 
                 let torch_nn = py.import("torch.nn")?;
 
@@ -178,7 +178,7 @@ mod tests {
 
         // Compare with Python output
         // Slightly higher threshold due to cumulative FP errors in nested operations
-        python_output.almost_equal(output, Some(0.02));
+        python_output.almost_equal(output, None);
     }
 
     #[test]
@@ -187,8 +187,8 @@ mod tests {
 
         fn python() -> PyResult<(PythonData<4>, PythonData<4>)> {
             Python::attach(|py| {
-                use crate::python::python_data::set_seed;
-                set_seed(py, 42)?;
+                use crate::python::python_data::init_torch;
+                init_torch(py, 42)?;
 
                 let torch_nn = py.import("torch.nn")?;
 
@@ -264,6 +264,6 @@ mod tests {
         // Higher threshold for larger dimensions due to floating-point precision
         // With deterministic seeds, some edge cases may have slightly higher variance
         // Still excellent match: 99.999% of values are within tolerance (1/98304 outliers)
-        python_output.almost_equal(output, Some(0.5));
+        python_output.almost_equal(output, None);
     }
 }

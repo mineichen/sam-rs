@@ -275,17 +275,28 @@ where
     /// Normalize pixel values and pad to a square input.
     pub fn preprocess<const D: usize>(&self, x: Tensor<B, D, Int>) -> Tensor<B, D, Float> {
         let device = x.device();
-        
+
         #[cfg(test)]
         {
             println!("Preprocess input shape: {:?}", x.shape());
             let pm = self.pixel_mean(&device);
             let ps = self.pixel_std(&device);
-            println!("Pixel mean shape: {:?}, values: {:?}", pm.shape(), self.pixel_mean);
-            println!("Pixel std shape: {:?}, values: {:?}", ps.shape(), self.pixel_std);
-            println!("Pixel mean unsqueezed shape: {:?}", pm.unsqueeze::<D>().shape());
+            println!(
+                "Pixel mean shape: {:?}, values: {:?}",
+                pm.shape(),
+                self.pixel_mean
+            );
+            println!(
+                "Pixel std shape: {:?}, values: {:?}",
+                ps.shape(),
+                self.pixel_std
+            );
+            println!(
+                "Pixel mean unsqueezed shape: {:?}",
+                pm.unsqueeze::<D>().shape()
+            );
         }
-        
+
         let x: Tensor<B, D, Float> = (x.to_float() - self.pixel_mean(&device).unsqueeze())
             / self.pixel_std(&device).unsqueeze();
         let size = x.dims();
@@ -317,17 +328,14 @@ mod test {
     #[test]
     fn test_sam_forward_boxes() {
         let original_size = (100, 200);
-        let python: PyResult<(
-            PythonData<3>,
-            PythonData<2>,
-            PythonData<4>,
-            PythonData<4>,
-            PythonData<2>,
-            PythonData<4>,
-        )> = Python::attach(|py| {
+        Python::attach(|py| {
             let sam = get_python_test_sam(&py)?;
+            let map = crate::python::recorder::get_python_map(sam.clone())?;
+
             let image = random_python_tensor_int(py, [3, 8, 8])?;
             let boxes = random_python_tensor(py, [4, 4])?;
+            let image_data: PythonData<3> = image.clone().try_into()?;
+            let boxes_data: PythonData<2> = boxes.clone().try_into()?;
 
             let kwargs = PyDict::new(py);
             kwargs.set_item("image", &image)?;
@@ -338,127 +346,118 @@ mod test {
                 .call1(([kwargs], false))?
                 .downcast::<PyList>()?
                 .get_item(0)?;
-            let masks = output.get_item("masks")?;
-            let mask_values = output.get_item("mask_values")?;
-            let iou_predictions = output.get_item("iou_predictions")?;
-            let low_res_logits = output.get_item("low_res_logits")?;
-            Ok((
-                image.try_into()?,
-                boxes.try_into()?,
-                masks.try_into()?,
-                mask_values.try_into()?,
-                iou_predictions.try_into()?,
-                low_res_logits.try_into()?,
-            ))
-        });
-        let (image, boxes, _masks, mask_values, iou_predictions, low_res_logits) = python.unwrap();
-        let device = Default::default();
-        let mut sam = get_test_sam(&device);
-        let input = Input {
-            image: image.into(),
-            boxes: Some(boxes.into()),
-            original_size: original_size.into(),
-            mask_inputs: None,
-            points: None,
-        };
-        let output = sam.forward(vec![input], false, &device);
-        let output = output.get(0).unwrap();
-        // masks.almost_equal(output.masks, None);
-        mask_values.almost_equal(output.mask_values.clone(), 2.);
-        iou_predictions.almost_equal(output.iou_predictions.clone(), 2.);
-        low_res_logits.almost_equal(output.low_res_logits.clone().unwrap(), 2.);
+            let mask_values: PythonData<4> = output.get_item("mask_values")?.try_into()?;
+            let iou_predictions: PythonData<2> = output.get_item("iou_predictions")?.try_into()?;
+            let low_res_logits: PythonData<4> = output.get_item("low_res_logits")?.try_into()?;
+
+            let device = Default::default();
+            let mut rust_sam = crate::python::recorder::load_sam(get_test_sam(&device), map);
+            let input = Input {
+                image: image_data.into(),
+                boxes: Some(boxes_data.into()),
+                original_size: original_size.into(),
+                mask_inputs: None,
+                points: None,
+            };
+            let rust_output = rust_sam.forward(vec![input], false, &device);
+            let rust_output = rust_output.get(0).unwrap();
+
+            mask_values.almost_equal(rust_output.mask_values.clone(), 2e-3);
+            iou_predictions.almost_equal(rust_output.iou_predictions.clone(), None);
+            low_res_logits.almost_equal(rust_output.low_res_logits.clone().unwrap(), 3e-3);
+
+            Ok::<_, pyo3::PyErr>(())
+        })
+        .unwrap();
     }
+
     #[test]
     fn test_sam_forward_points() {
         let original_size = (100, 200);
-        let python: PyResult<(
-            PythonData<3>,
-            PythonData<3>,
-            PythonData<2>,
-            PythonData<4>,
-            PythonData<4>,
-            PythonData<2>,
-            PythonData<4>,
-        )> = Python::attach(|py| {
+        Python::attach(|py| {
             let sam = get_python_test_sam(&py)?;
+            let map = crate::python::recorder::get_python_map(sam.clone())?;
+
             let image = random_python_tensor_int(py, [3, 8, 8])?;
             let points = random_python_tensor(py, [4, 2, 2])?;
             let labels = random_python_tensor(py, [4, 2])?;
+            let image_data: PythonData<3> = image.clone().try_into()?;
+            let points_data: PythonData<3> = points.clone().try_into()?;
+            let labels_data: PythonData<2> = labels.clone().try_into()?;
 
             let kwargs = PyDict::new(py);
-            kwargs.set_item("image", image.clone())?;
-            kwargs.set_item("point_coords", points.clone())?;
-            kwargs.set_item("point_labels", labels.clone())?;
+            kwargs.set_item("image", image)?;
+            kwargs.set_item("point_coords", points)?;
+            kwargs.set_item("point_labels", labels)?;
             kwargs.set_item("original_size", original_size)?;
 
             let output = sam
                 .call1(([kwargs], false))?
                 .downcast::<PyList>()?
                 .get_item(0)?;
-            let masks = output.get_item("masks")?;
-            let mask_values = output.get_item("mask_values")?;
-            let iou_predictions = output.get_item("iou_predictions")?;
-            let low_res_logits = output.get_item("low_res_logits")?;
-            Ok((
-                image.try_into()?,
-                points.try_into()?,
-                labels.try_into()?,
-                masks.try_into()?,
-                mask_values.try_into()?,
-                iou_predictions.try_into()?,
-                low_res_logits.try_into()?,
-            ))
-        });
-        let (image, points, labels, _masks, mask_values, iou_predictions, low_res_logits) =
-            python.unwrap();
+            let mask_values: PythonData<4> = output.get_item("mask_values")?.try_into()?;
+            let iou_predictions: PythonData<2> = output.get_item("iou_predictions")?.try_into()?;
+            let low_res_logits: PythonData<4> = output.get_item("low_res_logits")?.try_into()?;
 
-        let device = Default::default();
-        let mut sam = get_test_sam(&device);
-        let input = Input {
-            image: image.into(),
-            boxes: None,
-            original_size: original_size.into(),
-            mask_inputs: None,
-            points: Some((points.into(), labels.into())),
-        };
-        let output = sam.forward(vec![input], false, &device);
-        let output = output.get(0).unwrap();
-        // masks.almost_equal(output.masks, None);
-        mask_values.almost_equal(output.mask_values.clone(), 2.);
-        iou_predictions.almost_equal(output.iou_predictions.clone(), 2.);
-        low_res_logits.almost_equal(output.low_res_logits.clone().unwrap(), 2.);
+            let device = Default::default();
+            let mut rust_sam = crate::python::recorder::load_sam(get_test_sam(&device), map);
+            let input = Input {
+                image: image_data.into(),
+                boxes: None,
+                original_size: original_size.into(),
+                mask_inputs: None,
+                points: Some((points_data.into(), labels_data.into())),
+            };
+            let rust_output = rust_sam.forward(vec![input], false, &device);
+            let rust_output = rust_output.get(0).unwrap();
+
+            mask_values.almost_equal(rust_output.mask_values.clone(), None);
+            iou_predictions.almost_equal(rust_output.iou_predictions.clone(), None);
+            low_res_logits.almost_equal(rust_output.low_res_logits.clone().unwrap(), None);
+
+            Ok::<_, pyo3::PyErr>(())
+        })
+        .unwrap();
     }
 
     #[test]
     fn test_sam_postprocess_masks() {
         let input_size = (684, 1024);
         let original = (534, 800);
-        let python: PyResult<(PythonData<4>, PythonData<4>)> = Python::attach(|py| {
+        Python::attach(|py| {
             let sam = get_python_test_sam(&py)?;
             let masks = random_python_tensor(py, [4, 1, 256, 256])?;
-            let output =
-                sam.call_method1("postprocess_masks", (masks.clone(), input_size, original))?;
-            Ok((masks.try_into()?, output.try_into()?))
-        });
-        let (masks, python) = python.unwrap();
-        let device = Default::default();
-        let sam = get_test_sam(&device);
+            let masks_data: PythonData<4> = masks.clone().try_into()?;
+            let output = sam.call_method1("postprocess_masks", (masks, input_size, original))?;
+            let output_data: PythonData<4> = output.try_into()?;
 
-        let output = sam.postprocess_masks(masks.into(), input_size.into(), original.into());
-        python.almost_equal(output, 2.);
+            let device = Default::default();
+            let rust_sam = get_test_sam(&device);
+            let rust_output =
+                rust_sam.postprocess_masks(masks_data.into(), input_size.into(), original.into());
+
+            output_data.almost_equal(rust_output, None);
+            Ok::<_, pyo3::PyErr>(())
+        })
+        .unwrap();
     }
+
     #[test]
     fn test_sam_preprocess() {
-        let python: PyResult<(PythonData<3, i64>, PythonData<3>)> = Python::attach(|py| {
+        Python::attach(|py| {
             let sam = get_python_test_sam(&py)?;
             let input = random_python_tensor_int(py, [3, 171, 128])?;
-            let output = sam.call_method1("preprocess", (input.clone(),))?;
-            Ok((input.try_into()?, output.try_into()?))
-        });
-        let (input, python) = python.unwrap();
-        let device = Default::default();
-        let sam = get_test_sam(&device);
-        let output = sam.preprocess(input.into());
-        python.almost_equal(output, None);
+            let input_data: PythonData<3> = input.clone().try_into()?;
+            let output = sam.call_method1("preprocess", (input,))?;
+            let output_data: PythonData<3> = output.try_into()?;
+
+            let device = Default::default();
+            let rust_sam = get_test_sam(&device);
+            let rust_output = rust_sam.preprocess(input_data.into());
+
+            output_data.almost_equal(rust_output, None);
+            Ok::<_, pyo3::PyErr>(())
+        })
+        .unwrap();
     }
 }

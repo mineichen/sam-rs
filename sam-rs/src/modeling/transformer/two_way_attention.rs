@@ -194,7 +194,7 @@ mod test {
 
         let (out_queries, out_keys) =
             block.forward(queries.into(), keys.into(), query_pe.into(), key_pe.into());
-        python1.almost_equal(out_queries, 0.5);
-        python2.almost_equal(out_keys, 0.1);
+        python1.almost_equal(out_queries, None);
+        python2.almost_equal(out_keys, None);
     }
 }

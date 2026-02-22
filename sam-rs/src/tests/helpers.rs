@@ -12,7 +12,6 @@ use pyo3::{PyAny, PyResult, Python};
 
 use crate::{build_sam::SamVersion, sam::Sam};
 
-pub const TEST_ALMOST_THRESHOLD: f32 = 0.01;
 // Using NdArray backend for tests (CPU-based, doesn't require GPU)
 #[cfg(test)]
 pub type TestBackend = burn_ndarray::NdArray<f32>;
@@ -61,6 +60,18 @@ pub fn get_python_sam<'a>(
 #[cfg(feature = "pyo3")]
 pub fn get_python_test_sam<'a>(py: &'a Python) -> PyResult<pyo3::Bound<'a, PyAny>> {
     get_python_sam(&py, TEST_SAM, None)
+}
+
+#[cfg(all(test, feature = "pyo3"))]
+pub fn get_test_sam_with_python_weights(
+    device: &<TestBackend as Backend>::Device,
+) -> PyResult<Sam<TestBackend>> {
+    Python::attach(|py| {
+        let python_sam = get_python_test_sam(&py)?;
+        let map = crate::python::recorder::get_python_map(python_sam)?;
+        let rust_sam = get_test_sam(device);
+        Ok(crate::python::recorder::load_sam(rust_sam, map))
+    })
 }
 
 pub fn load_module<B: Backend, D: Module<B>>(name: &str, module: D) -> D {
@@ -125,4 +136,67 @@ pub fn weight_file_exists(name: &str) -> bool {
         name
     ))
     .exists()
+}
+
+#[cfg(test)]
+mod weight_tests {
+    use super::*;
+    use crate::build_sam::SamVersion;
+    use burn::record::{BinGzFileRecorder, Recorder};
+
+    #[test]
+    fn test_vitb_weights_loaded_correctly() {
+        let device = Default::default();
+        let recorder = BinGzFileRecorder::<FullPrecisionSettings>::default();
+
+        // Use CARGO_MANIFEST_DIR to find the weights file
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+        let workspace_root = std::path::Path::new(&manifest_dir).parent().unwrap();
+        let weight_path = workspace_root.join("sam-convert/sam_vit_b_01ec64");
+
+        if !weight_path.exists() {
+            eprintln!(
+                "Skipping weight test - weights file not found at {:?}",
+                weight_path
+            );
+            return;
+        }
+
+        let record = recorder.load(weight_path.into(), &device);
+        match record {
+            Ok(record) => {
+                let sam: crate::sam::Sam<TestBackend> =
+                    SamVersion::VitB.build::<TestBackend>(None, &device);
+                let sam = sam.load_record(record);
+
+                // Check iou_token weight - PyTorch expected: [0.02, 0.652, 0.027, -0.156, -0.057]
+                let iou_token_weight = sam
+                    .mask_decoder
+                    .iou_token
+                    .clone()
+                    .into_record()
+                    .weight
+                    .val();
+                let data = iou_token_weight.to_data();
+                let slice: Vec<f32> = data.as_slice().unwrap().to_vec();
+
+                println!("iou_token.weight first 5: {:?}", &slice[..5]);
+
+                // Expected from PyTorch: [0.02, 0.652, 0.027, -0.156, -0.057]
+                assert!(
+                    (slice[0] - 0.02).abs() < 0.01,
+                    "iou_token[0] should be ~0.02, got {}",
+                    slice[0]
+                );
+                assert!(
+                    (slice[1] - 0.652).abs() < 0.02,
+                    "iou_token[1] should be ~0.65, got {}",
+                    slice[1]
+                );
+            }
+            Err(e) => {
+                eprintln!("Failed to load weights: {:?}", e);
+            }
+        }
+    }
 }

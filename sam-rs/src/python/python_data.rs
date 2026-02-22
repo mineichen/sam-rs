@@ -1,20 +1,30 @@
+use std::f32;
+
 use burn::tensor::{backend::Backend, BasicOps, Element, ElementConversion, Tensor, TensorKind};
-use pyo3::types::PyAnyMethods;
+use pyo3::types::{PyAnyMethods, PyModule};
 use pyo3::Bound;
 use pyo3::{types::PyTuple, FromPyObject, PyAny, PyErr, PyResult, Python};
 
-use crate::{
-    burn_helpers::TensorHelpers, sam_predictor::Size, tests::helpers::TEST_ALMOST_THRESHOLD,
-};
+use crate::{burn_helpers::TensorHelpers, sam_predictor::Size};
 
 pub trait PythonDataKind: std::fmt::Debug + PartialEq + Clone + Element + Sized + Copy {}
 impl PythonDataKind for f32 {}
 impl PythonDataKind for i64 {}
-/// Set PyTorch random seed for deterministic tests
-pub fn set_seed(py: Python<'_>, seed: i64) -> PyResult<()> {
+
+/// Initialize a clean Python test environment
+/// This helps isolate tests by resetting random state and ensuring clean imports
+pub fn init_torch(py: Python<'_>, seed: i64) -> PyResult<Bound<'_, PyModule>> {
+    // Set random seed for reproducibility
     let torch = py.import("torch")?;
     torch.call_method1("manual_seed", (seed,))?;
-    Ok(())
+
+    // Ensure numpy random seed is also set (if numpy is used)
+    if let Ok(np) = py.import("numpy") {
+        let np_random = np.getattr("random")?;
+        np_random.call_method1("seed", (seed,))?;
+    }
+
+    Ok(torch)
 }
 
 pub fn random_python_tensor<'py, const D: usize>(
@@ -67,9 +77,10 @@ impl<const D: usize, T: PythonDataKind> PythonData<D, T> {
         assert_eq!(self, &other, "PythonData::eq failed");
     }
 
+    #[track_caller]
     pub fn almost_equal<I: Into<Self>, X: Into<Option<f32>>>(&self, output: I, threshold: X) {
         let other: Self = output.into();
-        let threshold = threshold.into().unwrap_or(TEST_ALMOST_THRESHOLD);
+        let threshold = threshold.into().unwrap_or(1e-3);
         if self.shape != other.shape {
             panic!("TestTensor sizes don't match");
         }
@@ -84,7 +95,7 @@ impl<const D: usize, T: PythonDataKind> PythonData<D, T> {
                 exact += 1;
                 continue;
             }
-            let diff = (a - b).abs() / a.abs().max(b.abs());
+            let diff = (a - b).abs();
             if diff <= threshold {
                 almost += 1;
                 continue;
@@ -97,13 +108,12 @@ impl<const D: usize, T: PythonDataKind> PythonData<D, T> {
         match failed {
             0 => {}
             _ => {
-                println!(
+                println!("left: {:?}", self);
+                println!("right: {:?}", other);
+                panic!(
                     "TestTensor::eq: exact: {}, almost: {}, failed: {}, total: {}! Max threshold: {}, current: {}",
                     exact, almost, failed, total,max_diff, threshold
                 );
-                println!("left: {:?}", self);
-                println!("right: {:?}", other);
-                panic!("almost equal failed");
             }
         }
     }
