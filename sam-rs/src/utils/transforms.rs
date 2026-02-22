@@ -23,12 +23,8 @@ impl ResizeLongestSide {
             ImageBuffer::from_raw(width as u32, height as u32, image_data).unwrap();
         let resized_img =
             image::imageops::resize(&img, tar_w as u32, tar_h as u32, FilterType::CatmullRom);
-        let resized_data: Vec<i32> = resized_img
-            .into_raw()
-            .into_iter()
-            .map(|x| x as i32)
-            .collect();
-        Tensor::of_slice(resized_data, [tar_h, tar_w, 3], &device)
+        let resized_data = resized_img.into_raw().into_iter().map(|x| x as i32);
+        Tensor::collect_shaped(resized_data, [tar_h, tar_w, 3], &device)
     }
     // Expects a numpy array with shape HxWxC in uint8 format.
     pub fn apply_image<B: Backend>(&self, image: Tensor<B, 3, Int>) -> Tensor<B, 3, Int> {

@@ -198,8 +198,8 @@ mod test {
         let version = SamVersion::VitB;
         let checkpoint = Some(Path::new("../sam-convert/sam_vit_b_01ec64"));
         let checkpoint_pth = Some(Path::new("../sam-convert/sam_vit_b_01ec64.pth"));
-        let inputs = vec![744, 457];
-        let labels = vec![1];
+        let inputs = [744, 457];
+        let labels = [1];
 
         // Remove generated images at start so we immediately see if they weren't regenerated
         let rust_output = get_prediction_output_path(image_path, "_rust");
@@ -336,8 +336,8 @@ mod test {
         predictor.set_image(image2.clone(), ImageFormat::RGB);
 
         //Example inputs
-        let input_point = Tensor::of_slice(inputs, [1, 2], &device);
-        let input_label = Tensor::of_slice(labels, [1], &device);
+        let input_point = Tensor::collect_shaped(inputs, [1, 2], &device);
+        let input_label = Tensor::collect_shaped(labels, [1], &device);
 
         println!(
             "Input point: {:?}",

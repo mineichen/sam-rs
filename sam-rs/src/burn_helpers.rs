@@ -1,6 +1,4 @@
-use burn::tensor::{
-    backend::Backend, BasicOps, ElementConversion, Int, Tensor, TensorData, TensorKind,
-};
+use burn::tensor::{backend::Backend, BasicOps, ElementConversion, Tensor, TensorData, TensorKind};
 
 pub trait TensorHelpers<B: Backend, const D: usize, K: TensorKind<B> + BasicOps<B>> {
     fn calc_dims<const D2: usize>(&self, dims: [usize; D2]) -> [usize; D2];
@@ -8,8 +6,8 @@ pub trait TensorHelpers<B: Backend, const D: usize, K: TensorKind<B> + BasicOps<
     fn unsqueeze_end<const D2: usize>(self) -> Tensor<B, D2, K>;
     fn reshape_max<const D2: usize>(&self, dims: [usize; D2]) -> Tensor<B, D2, K>;
 
-    fn of_slice<T: burn::tensor::Element>(
-        slice: Vec<T>,
+    fn collect_shaped<T: burn::tensor::Element>(
+        slice: impl IntoIterator<Item = T>,
         shape: [usize; D],
         device: &B::Device,
     ) -> Self
@@ -57,15 +55,15 @@ impl<B: Backend, const D: usize, K: TensorKind<B> + BasicOps<B>> TensorHelpers<B
         let tensor = tensor.permute(dims);
         tensor
     }
-    fn of_slice<T: burn::tensor::Element>(
-        slice: Vec<T>,
+    fn collect_shaped<T: burn::tensor::Element>(
+        slice: impl IntoIterator<Item = T>,
         shape: [usize; D],
         device: &B::Device,
     ) -> Self
     where
         K::Elem: ElementConversion,
     {
-        let slice: Vec<K::Elem> = slice.into_iter().map(|x| K::Elem::from_elem(x)).collect();
+        let slice = slice.into_iter().map(|x| K::Elem::from_elem(x)).collect();
         let data = TensorData::new(slice, shape);
         Tensor::from_data(data, device)
     }
@@ -111,17 +109,6 @@ impl<B: Backend, const D: usize, K: TensorKind<B> + BasicOps<B>> TensorHelpers<B
     }
 }
 
-pub trait ToFloat<B: Backend, const D: usize> {
-    fn to_float(&self) -> Tensor<B, D>;
-}
-impl<B: Backend, const D: usize> ToFloat<B, D> for Tensor<B, D, Int> {
-    fn to_float(&self) -> Tensor<B, D> {
-        let device = self.device();
-        let (slice, shape) = self.to_slice::<f32>();
-        Tensor::of_slice(slice, shape, &device)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -132,7 +119,7 @@ mod tests {
     fn test_repeat_interleave_1d() {
         // PyTorch: torch.tensor([1, 2, 3]).repeat_interleave(2) -> [1, 1, 2, 2, 3, 3]
         let device = Default::default();
-        let t: Tensor<TestBackend, 1> = Tensor::of_slice(vec![1.0f32, 2.0, 3.0], [3], &device);
+        let t: Tensor<TestBackend, 1> = Tensor::collect_shaped([1.0f32, 2.0, 3.0], [3], &device);
         let result = t.repeat_interleave(2, 0);
         let (vals, _) = result.to_slice::<f32>();
         assert_eq!(vals, vec![1.0, 1.0, 2.0, 2.0, 3.0, 3.0]);
@@ -144,7 +131,7 @@ mod tests {
         // -> [[1, 2], [1, 2], [3, 4], [3, 4]]
         let device = Default::default();
         let t: Tensor<TestBackend, 2> =
-            Tensor::of_slice(vec![1.0f32, 2.0, 3.0, 4.0], [2, 2], &device);
+            Tensor::collect_shaped([1.0f32, 2.0, 3.0, 4.0], [2, 2], &device);
         let result = t.repeat_interleave(2, 0);
         let (vals, shape) = result.to_slice::<f32>();
         assert_eq!(shape, [4, 2]);
@@ -157,7 +144,7 @@ mod tests {
         // -> [[1, 1, 2, 2], [3, 3, 4, 4]]
         let device = Default::default();
         let t: Tensor<TestBackend, 2> =
-            Tensor::of_slice(vec![1.0f32, 2.0, 3.0, 4.0], [2, 2], &device);
+            Tensor::collect_shaped([1.0f32, 2.0, 3.0, 4.0], [2, 2], &device);
         let result = t.repeat_interleave(2, 1);
         let (vals, shape) = result.to_slice::<f32>();
         assert_eq!(shape, [2, 4]);
@@ -168,8 +155,8 @@ mod tests {
     fn test_repeat_interleave_4d() {
         // Test 4D tensor (like image embeddings [1, 256, 64, 64])
         let device = Default::default();
-        let t: Tensor<TestBackend, 4> = Tensor::of_slice(
-            vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
+        let t: Tensor<TestBackend, 4> = Tensor::collect_shaped(
+            [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
             [1, 2, 2, 2],
             &device,
         );

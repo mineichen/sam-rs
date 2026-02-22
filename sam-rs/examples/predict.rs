@@ -46,8 +46,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Image set [{:.3}s]", elapsed());
 
     println!("Running prediction for point ({}, {})...", pos_x, pos_y,);
-    let point_coords = Tensor::of_slice(vec![pos_x, pos_y], [1, 2], &device);
-    let point_labels = Tensor::of_slice(vec![1i64], [1], &device);
+    let point_coords = Tensor::collect_shaped([pos_x, pos_y], [1, 2], &device);
+    let point_labels = Tensor::collect_shaped([1i64], [1], &device);
 
     let (masks, iou_predictions, _, _) =
         predictor.predict(Some(point_coords), Some(point_labels), None, None, true);

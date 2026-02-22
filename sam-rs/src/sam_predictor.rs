@@ -3,7 +3,6 @@ use burn::tensor::backend::Backend;
 use burn::tensor::{Bool, Int, Tensor};
 use serde::{Deserialize, Serialize};
 
-use crate::burn_helpers::ToFloat;
 use crate::sam::Sam;
 use crate::utils::transforms::ResizeLongestSide;
 
@@ -243,8 +242,6 @@ where
         let (mut coords_torch, mut labels_torch, mut box_torch, mut mask_input_torch) =
             (None, None, None, None);
         if let Some(point_coords) = point_coords {
-            let point_coords_float = point_coords.to_float();
-
             #[cfg(test)]
             {
                 println!(
@@ -257,6 +254,7 @@ where
                 );
             }
 
+            let point_coords_float = point_coords.float();
             let point_coords = self
                 .transfrom
                 .apply_coords(point_coords_float, self.original_size.unwrap());
@@ -273,12 +271,12 @@ where
             labels_torch = Some(
                 point_labels
                     .expect("point_labels must be supplied if point_coords is supplied.")
-                    .to_float()
+                    .float()
                     .unsqueeze(),
             );
         }
         if let Some(boxes) = boxes {
-            let boxes_float = boxes.to_float();
+            let boxes_float = boxes.float();
             let boxes = self
                 .transfrom
                 .apply_boxes(boxes_float, self.original_size.unwrap());

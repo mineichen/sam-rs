@@ -2,7 +2,7 @@ use burn::module::Module;
 use burn::tensor::{backend::Backend, Tensor};
 use burn::tensor::{Bool, Float, Int};
 
-use crate::burn_helpers::{TensorHelpers, ToFloat};
+use crate::burn_helpers::TensorHelpers;
 use crate::{
     modeling::{
         image_encoder::ImageEncoderViT, mask_decoder::MaskDecoder, prompt_encoder::PromptEncoder,
@@ -76,14 +76,14 @@ where
         }
     }
     fn pixel_mean(&self, device: &B::Device) -> Tensor<B, 3> {
-        Tensor::of_slice(self.pixel_mean.to_vec(), [self.pixel_mean.len()], device).reshape_max([
+        Tensor::collect_shaped(self.pixel_mean, [self.pixel_mean.len()], device).reshape_max([
             usize::MAX,
             1,
             1,
         ])
     }
     fn pixel_std(&self, device: &B::Device) -> Tensor<B, 3> {
-        Tensor::of_slice(self.pixel_std.to_vec(), [self.pixel_std.len()], device).reshape_max([
+        Tensor::collect_shaped(self.pixel_std, [self.pixel_std.len()], device).reshape_max([
             usize::MAX,
             1,
             1,
@@ -297,7 +297,7 @@ where
             );
         }
 
-        let x: Tensor<B, D, Float> = (x.to_float() - self.pixel_mean(&device).unsqueeze())
+        let x: Tensor<B, D, Float> = (x.float() - self.pixel_mean(&device).unsqueeze())
             / self.pixel_std(&device).unsqueeze();
         let size = x.dims();
         let (h, w) = (size[D - 2], size[D - 1]);

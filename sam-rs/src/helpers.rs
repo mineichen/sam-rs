@@ -16,7 +16,7 @@ pub fn load_image<B: Backend>(image_path: &str, device: &B::Device) -> (Tensor<B
 
     let slice = img.into_vec();
     let shape = [size.0, size.1, 3];
-    let image = Tensor::of_slice(slice, shape, device);
+    let image = Tensor::collect_shaped(slice, shape, device);
     (image, size)
 }
 

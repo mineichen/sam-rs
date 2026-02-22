@@ -164,7 +164,7 @@ where
         let slice = data.slice;
         let shape = data.shape;
         let device = B::Device::default();
-        Tensor::of_slice(slice, shape, &device)
+        Tensor::collect_shaped(slice, shape, &device)
     }
 }
 
