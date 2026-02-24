@@ -2,16 +2,28 @@ use std::path::Path;
 use std::time::Instant;
 
 use burn::tensor::Tensor;
-use burn_ndarray::NdArray;
 
 use sam_rs::build_sam::SamVersion;
 use sam_rs::burn_helpers::TensorHelpers;
 use sam_rs::helpers::load_image;
 use sam_rs::sam_predictor::{ImageFormat, SamPredictor, Size};
 
-type Backend = NdArray<f32>;
+//type Backend = burn_ndarray::NdArray<f32>;
+//type Backend = burn_wgpu::Wgpu;
+type Backend = burn_cpu::Cpu;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+use std::thread;
+
+fn main() -> Result<(), String> {
+    thread::Builder::new()
+        .stack_size(160 * 1024 * 1024)
+        .spawn(|| main_inner().map_err(|e| e.to_string()))
+        .unwrap()
+        .join()
+        .unwrap()
+}
+
+fn main_inner() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1).fuse();
 
     let image_path = args
@@ -32,7 +44,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Loading SAM model...");
     println!("Checkpoint: {}", checkpoint);
-    let device = Default::default();
+    let instance = wgpu::Instance::default();
+    let adapters = instance.enumerate_adapters(wgpu::Backends::all());
+    println!("Adapters: {}", adapters.len());
+    //let device = Default::default();
+    let device = burn_cpu::CpuDevice::default();
+
     let sam = SamVersion::VitB.build::<Backend>(Some(Path::new(&checkpoint)), &device);
     let mut predictor = SamPredictor::new(sam);
     println!("Model loaded [{:.3}s]", elapsed());
