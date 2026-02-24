@@ -213,63 +213,91 @@ where
         target_h: usize,
         target_w: usize,
     ) -> Tensor<B, 4> {
-        use burn::tensor::{ElementConversion, TensorData};
-
         let shape = image.dims();
         let (batch, channels, src_h, src_w) = (shape[0], shape[1], shape[2], shape[3]);
-
         let device = image.device();
-        let image_data = image.to_data();
-        let image_slice = image_data.as_slice::<B::FloatElem>().unwrap();
 
-        let mut result = Vec::with_capacity(batch * channels * target_h * target_w);
+        // Create target coordinate grids
+        let i_coords: Tensor<B, 1> = Tensor::arange(0..target_h as i64, &device).float();
+        let j_coords: Tensor<B, 1> = Tensor::arange(0..target_w as i64, &device).float();
 
-        // F.interpolate with mode='bilinear', align_corners=False
-        for b in 0..batch {
-            for c in 0..channels {
-                for i in 0..target_h {
-                    for j in 0..target_w {
-                        let src_y =
-                            ((i as f32 + 0.5) * src_h as f32 / target_h as f32 - 0.5).max(0.0);
-                        let src_x =
-                            ((j as f32 + 0.5) * src_w as f32 / target_w as f32 - 0.5).max(0.0);
+        // Compute source coordinates using align_corners=False formula
+        let src_y: Tensor<B, 2> = i_coords
+            .add_scalar(0.5)
+            .mul_scalar(src_h as f32 / target_h as f32)
+            .sub_scalar(0.5)
+            .clamp_min(0.0)
+            .reshape([target_h, 1])
+            .repeat_dim(1, target_w);
 
-                        let y0 = src_y.floor() as usize;
-                        let y1 = (y0 + 1).min(src_h - 1);
-                        let x0 = src_x.floor() as usize;
-                        let x1 = (x0 + 1).min(src_w - 1);
+        let src_x: Tensor<B, 2> = j_coords
+            .add_scalar(0.5)
+            .mul_scalar(src_w as f32 / target_w as f32)
+            .sub_scalar(0.5)
+            .clamp_min(0.0)
+            .reshape([1, target_w])
+            .repeat_dim(0, target_h);
 
-                        let wy = src_y - y0 as f32;
-                        let wx = src_x - x0 as f32;
+        // Compute integer coordinates and weights
+        let y0: Tensor<B, 2> = src_y.clone().floor();
+        let y1: Tensor<B, 2> = y0.clone().add_scalar(1.0).clamp_max((src_h - 1) as f32);
+        let x0: Tensor<B, 2> = src_x.clone().floor();
+        let x1: Tensor<B, 2> = x0.clone().add_scalar(1.0).clamp_max((src_w - 1) as f32);
 
-                        let v00 = image_slice
-                            [b * channels * src_h * src_w + c * src_h * src_w + y0 * src_w + x0]
-                            .elem::<f32>();
-                        let v01 = image_slice
-                            [b * channels * src_h * src_w + c * src_h * src_w + y0 * src_w + x1]
-                            .elem::<f32>();
-                        let v10 = image_slice
-                            [b * channels * src_h * src_w + c * src_h * src_w + y1 * src_w + x0]
-                            .elem::<f32>();
-                        let v11 = image_slice
-                            [b * channels * src_h * src_w + c * src_h * src_w + y1 * src_w + x1]
-                            .elem::<f32>();
+        let wy: Tensor<B, 2> = src_y - y0.clone();
+        let wx: Tensor<B, 2> = src_x - x0.clone();
 
-                        let interp = v00 * (1.0 - wx) * (1.0 - wy)
-                            + v01 * wx * (1.0 - wy)
-                            + v10 * (1.0 - wx) * wy
-                            + v11 * wx * wy;
+        // Convert to integer indices
+        let y0_idx: Tensor<B, 2, burn::tensor::Int> = y0.int();
+        let y1_idx: Tensor<B, 2, burn::tensor::Int> = y1.int();
+        let x0_idx: Tensor<B, 2, burn::tensor::Int> = x0.int();
+        let x1_idx: Tensor<B, 2, burn::tensor::Int> = x1.int();
 
-                        result.push(B::FloatElem::from_elem(interp));
-                    }
-                }
-            }
-        }
+        // Flatten indices
+        let y0_flat: Tensor<B, 1, burn::tensor::Int> = y0_idx.reshape([target_h * target_w]);
+        let y1_flat: Tensor<B, 1, burn::tensor::Int> = y1_idx.reshape([target_h * target_w]);
+        let x0_flat: Tensor<B, 1, burn::tensor::Int> = x0_idx.reshape([target_h * target_w]);
+        let x1_flat: Tensor<B, 1, burn::tensor::Int> = x1_idx.reshape([target_h * target_w]);
 
-        Tensor::from_data(
-            TensorData::new(result, [batch, channels, target_h, target_w]),
-            &device,
-        )
+        // Reshape image for gathering
+        let image_flat = image.reshape([batch, channels, src_h * src_w]);
+
+        // Compute linear indices
+        let idx00: Tensor<B, 1, burn::tensor::Int> =
+            y0_flat.clone() * src_w as i64 + x0_flat.clone();
+        let idx01: Tensor<B, 1, burn::tensor::Int> =
+            y0_flat.clone() * src_w as i64 + x1_flat.clone();
+        let idx10: Tensor<B, 1, burn::tensor::Int> =
+            y1_flat.clone() * src_w as i64 + x0_flat.clone();
+        let idx11: Tensor<B, 1, burn::tensor::Int> = y1_flat * src_w as i64 + x1_flat;
+
+        // Gather values
+        let v00: Tensor<B, 3> = image_flat.clone().select(2, idx00);
+        let v01: Tensor<B, 3> = image_flat.clone().select(2, idx01);
+        let v10: Tensor<B, 3> = image_flat.clone().select(2, idx10);
+        let v11: Tensor<B, 3> = image_flat.select(2, idx11);
+
+        // Reshape weights
+        let wx_flat: Tensor<B, 1> = wx.reshape([target_h * target_w]);
+        let wy_flat: Tensor<B, 1> = wy.reshape([target_h * target_w]);
+
+        let one_minus_wx: Tensor<B, 1> = wx_flat.clone().neg().add_scalar(1.0);
+        let one_minus_wy: Tensor<B, 1> = wy_flat.clone().neg().add_scalar(1.0);
+
+        // Bilinear interpolation weights
+        let w00 = one_minus_wx.clone() * one_minus_wy.clone();
+        let w01 = wx_flat.clone() * one_minus_wy;
+        let w10 = one_minus_wx * wy_flat.clone();
+        let w11 = wx_flat * wy_flat;
+
+        // Reshape for broadcasting
+        let w00 = w00.reshape([1, 1, target_h * target_w]);
+        let w01 = w01.reshape([1, 1, target_h * target_w]);
+        let w10 = w10.reshape([1, 1, target_h * target_w]);
+        let w11 = w11.reshape([1, 1, target_h * target_w]);
+
+        let result: Tensor<B, 3> = v00 * w00 + v01 * w01 + v10 * w10 + v11 * w11;
+        result.reshape([batch, channels, target_h, target_w])
     }
 
     /// Normalize pixel values and pad to a square input.
