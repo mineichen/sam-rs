@@ -2,7 +2,7 @@ use std::f32::consts::PI;
 
 use burn::{
     module::{Module, Param},
-    tensor::{backend::Backend, ElementConversion, Tensor},
+    tensor::{backend::Backend, Tensor},
 };
 
 use crate::sam_predictor::Size;
@@ -50,28 +50,23 @@ impl<B: Backend> PositionEmbeddingRandom<B> {
         let Size(h, w) = size;
         let device = Default::default();
 
-        // Manual cumsum implementation for y_embed (cumsum along dim 0)
-        // Create a grid of ones and compute cumulative sum
-        let mut y_values = Vec::with_capacity(h * w);
-        for i in 0..h {
-            for _j in 0..w {
-                y_values.push(B::FloatElem::from_elem((i + 1) as f32 - 0.5));
-            }
-        }
-        let mut y_embed: Tensor<B, 2> =
-            Tensor::from_data(burn::tensor::TensorData::new(y_values, [h, w]), &device);
-        y_embed = y_embed / h as f32;
+        // y_embed: values increase along height dimension [h, w]
+        // y_embed[i, j] = (i + 0.5) / h
+        let y_embed: Tensor<B, 2> = Tensor::arange(0..h as i64, &device)
+            .float()
+            .add_scalar(0.5)
+            .reshape([h, 1])
+            .repeat_dim(1, w)
+            .div_scalar(h as f32);
 
-        // Manual cumsum implementation for x_embed (cumsum along dim 1)
-        let mut x_values = Vec::with_capacity(h * w);
-        for _i in 0..h {
-            for j in 0..w {
-                x_values.push(B::FloatElem::from_elem((j + 1) as f32 - 0.5));
-            }
-        }
-        let mut x_embed: Tensor<B, 2> =
-            Tensor::from_data(burn::tensor::TensorData::new(x_values, [h, w]), &device);
-        x_embed = x_embed / w as f32;
+        // x_embed: values increase along width dimension [h, w]
+        // x_embed[i, j] = (j + 0.5) / w
+        let x_embed: Tensor<B, 2> = Tensor::arange(0..w as i64, &device)
+            .float()
+            .add_scalar(0.5)
+            .reshape([1, w])
+            .repeat_dim(0, h)
+            .div_scalar(w as f32);
 
         let pe: Tensor<B, 3> = self._pe_encoding(Tensor::stack(vec![x_embed, y_embed], 2));
         pe.permute([2, 0, 1])
