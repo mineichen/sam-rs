@@ -229,6 +229,7 @@ mod test {
         sam_predictor::Size,
         tests::helpers::TestBackend,
     };
+    //type TestBackend = burn_cpu::Cpu;
 
     fn python_module<'a>(py: &'a Python) -> PyResult<Bound<'a, PyAny>> {
         let module = py
@@ -264,7 +265,8 @@ mod test {
         });
         let (input, python) = python.unwrap();
         let resize = super::ResizeLongestSide::new(64);
-        let output = resize.apply_image::<TestBackend>(input.into());
+        let output = resize
+            .apply_image::<TestBackend>(input.into_tensor::<TestBackend, _>(&Default::default()));
         python.almost_equal(output, Some(50.));
     }
     #[test]
@@ -280,7 +282,10 @@ mod test {
         });
         let (input, python) = python.unwrap();
         let resize = super::ResizeLongestSide::new(64);
-        let output = resize.apply_coords::<TestBackend, 3>(input.into(), original_size.into());
+        let output = resize.apply_coords::<TestBackend, 3>(
+            input.into_tensor::<TestBackend, _>(&Default::default()),
+            original_size.into(),
+        );
         python.almost_equal(output, None);
     }
 
@@ -297,7 +302,10 @@ mod test {
         });
         let (input, python) = python.unwrap();
         let resize = super::ResizeLongestSide::new(64);
-        let output = resize.apply_boxes::<TestBackend>(input.into(), original_size.into());
+        let output = resize.apply_boxes::<TestBackend>(
+            input.into_tensor::<TestBackend, _>(&Default::default()),
+            original_size.into(),
+        );
         python.almost_equal(output, None);
     }
 
@@ -311,7 +319,9 @@ mod test {
         });
         let (input, python) = python.unwrap();
         let resize = super::ResizeLongestSide::new(64);
-        let output = resize.apply_image_torch::<TestBackend>(input.into());
+        let output = resize.apply_image_torch::<TestBackend>(
+            input.into_tensor::<TestBackend, _>(&Default::default()),
+        );
         python.almost_equal(output, None);
     }
     #[test]
@@ -325,7 +335,10 @@ mod test {
         });
         let (input, python) = python.unwrap();
         let resize = super::ResizeLongestSide::new(64);
-        let output = resize.apply_coords_torch::<TestBackend, 2>(input.into(), size.into());
+        let output = resize.apply_coords_torch::<TestBackend, 2>(
+            input.into_tensor::<TestBackend, _>(&Default::default()),
+            size.into(),
+        );
         python.almost_equal(output, None);
     }
     #[test]
@@ -339,7 +352,10 @@ mod test {
         });
         let (input, python) = python.unwrap();
         let resize = super::ResizeLongestSide::new(64);
-        let output = resize.apply_boxes_torch::<TestBackend>(input.into(), size.into());
+        let output = resize.apply_boxes_torch::<TestBackend>(
+            input.into_tensor::<TestBackend, _>(&Default::default()),
+            size.into(),
+        );
         python.almost_equal(output, None);
     }
 }

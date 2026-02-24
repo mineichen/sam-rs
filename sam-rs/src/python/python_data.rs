@@ -77,6 +77,15 @@ impl<const D: usize, T: PythonDataKind> PythonData<D, T> {
         assert_eq!(self, &other, "PythonData::eq failed");
     }
 
+    pub fn into_tensor<B: Backend, K: TensorKind<B> + BasicOps<B, Elem: ElementConversion>>(
+        self,
+        device: &B::Device,
+    ) -> Tensor<B, D, K> {
+        let slice = self.slice;
+        let shape = self.shape;
+        Tensor::collect_shaped(slice, shape, device)
+    }
+
     #[track_caller]
     pub fn almost_equal<I: Into<Self>, X: Into<Option<f32>>>(&self, output: I, threshold: X) {
         let other: Self = output.into();
@@ -161,10 +170,11 @@ where
 use crate::tests::helpers::TestBackend;
 
 #[cfg(test)]
-impl<const D: usize, T: PythonDataKind, K: TensorKind<TestBackend> + BasicOps<TestBackend>>
-    From<PythonData<D, T>> for Tensor<TestBackend, D, K>
-where
-    <K as BasicOps<TestBackend>>::Elem: ElementConversion,
+impl<
+        const D: usize,
+        T: PythonDataKind,
+        K: TensorKind<TestBackend> + BasicOps<TestBackend, Elem: ElementConversion>,
+    > From<PythonData<D, T>> for Tensor<TestBackend, D, K>
 {
     fn from(data: PythonData<D, T>) -> Self {
         let slice = data.slice;
