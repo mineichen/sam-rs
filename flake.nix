@@ -22,7 +22,7 @@
           env = {
             LIBCLANG_PATH = "${pkgs.clang.cc.lib}/lib";
             PKG_CONFIG_PATH = "${pkgs.openssl.dev}/lib/pkgconfig";
-            LD_LIBRARY_PATH = "${pkgs.clang.cc.lib}/lib:${pkgs.stdenv.cc.cc.lib}/lib:${pkgs.openssl.out}/lib:${pythonEnv}/lib";
+            LD_LIBRARY_PATH = "${pkgs.glibc}/lib:${pkgs.clang.cc.lib}/lib:${pkgs.stdenv.cc.cc.lib}/lib:${pkgs.openssl.out}/lib:${pythonEnv}/lib";
             SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
             PYTHONPATH = "${pythonEnv}/${pkgs.python313.sitePackages}";
           };
@@ -91,18 +91,20 @@
                  pkgs.opencode
                  pkgs.coreutils
                  pkgs.busybox
+                (pkgs.runCommand "lib64-symlink" {} ''
+                  mkdir -p $out/lib64
+                  ln -s ${pkgs.glibc}/lib/ld-linux-x86-64.so.2 $out/lib64/ld-linux-x86-64.so.2
+                '')
                 (pkgs.writeScriptBin "entrypoint.sh" ''
                   #!${pkgs.bashInteractive}/bin/bash
                   ${envSetup}
                   export PYTHONPATH="/workspace/segment-anything:/workspace/mobile-sam:$PYTHONPATH"
                   alias grep=rg
-                  mkdir /lib64
-                  ln -s ${pkgs.glib}/lib/ld-linux-x86-64.so.2 /lib64/ld-linux-x86-64.so.2  # Required for tracel-llvm-bundler to work
                   ${greet}
                   exec ${pkgs.bashInteractive}/bin/bash
                 '')
               ];
-              pathsToLink = [ "/bin" "/lib" "/include" "/share" ];
+              pathsToLink = [ "/bin" "/lib" "/lib64" "/include" "/share" ];
             };
             config = {
               Env = pkgs.lib.mapAttrsToList (k: v: "${k}=${v}") env ++ [ "HOME=/root" ];
