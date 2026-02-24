@@ -43,10 +43,12 @@
             pkgs.clang
             pkgs.pkg-config
             pkgs.podman
-            pkgs.opencode
             pkgs.openssl
             pkgs.bashInteractive
             pythonEnv
+            pkgs.busybox
+            pkgs.git
+            pkgs.glibc
           ];
           greet = ''
             echo "===================================="
@@ -79,7 +81,7 @@
             '';
           };
           packages.isolated = pkgs.dockerTools.buildImage {
-            name = "isolated-dev";
+            name = "samrs-isolated-dev";
             tag = "latest";
             copyToRoot = pkgs.buildEnv {
               name = "isolated-env";
@@ -88,10 +90,14 @@
                  pkgs.git
                  pkgs.opencode
                  pkgs.coreutils
+                 pkgs.busybox
                 (pkgs.writeScriptBin "entrypoint.sh" ''
                   #!${pkgs.bashInteractive}/bin/bash
                   ${envSetup}
                   export PYTHONPATH="/workspace/segment-anything:/workspace/mobile-sam:$PYTHONPATH"
+                  alias grep=rg
+                  mkdir /lib64
+                  ln -s ${pkgs.glib}/lib/ld-linux-x86-64.so.2 /lib64/ld-linux-x86-64.so.2  # Required for tracel-llvm-bundler to work
                   ${greet}
                   exec ${pkgs.bashInteractive}/bin/bash
                 '')
@@ -107,6 +113,7 @@
           apps.isolated = {
             type = "app";
             program = toString (pkgs.writeShellScript "run-isolated" ''
+              ${pkgs.podman}/bin/podman rm samrs-isolated-dev:latest 2>/dev/null || true
               ${pkgs.podman}/bin/podman load \
                 --signature-policy ${policy} \
                 --input ${inputs.self.packages.${system}.isolated}
@@ -115,7 +122,7 @@
                 --tmpfs /tmp \
                 -v ".:/workspace:z" \
                 -e HOME=/root \
-                isolated-dev:latest /bin/entrypoint.sh
+                samrs-isolated-dev:latest /bin/entrypoint.sh
             '');
           };
         };
