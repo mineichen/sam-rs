@@ -1,7 +1,7 @@
 use burn::{
     module::{Module, Param},
     nn::{Linear, LinearConfig},
-    tensor::{activation::softmax, backend::Backend, ElementConversion, Tensor, TensorData},
+    tensor::{activation::softmax, backend::Backend, Tensor},
 };
 
 use crate::{burn_helpers::TensorHelpers, sam_predictor::Size};
@@ -140,43 +140,18 @@ fn add_decomposed_rel_pos<B: Backend>(
     let (b, dim) = (shape[0], shape[2]);
     let r_q = q.reshape([b, q_h, q_w, dim]);
 
-    // Replace einsum "bhwc,hkc->bhwk" with equivalent operations
-    // For each query height hi, compute: r_q[:, hi, :, :] @ rh[hi, :, :].T
-    // r_q[:, hi, :, :] has shape [b, q_w, dim]
-    // rh[hi, :, :] has shape [k_h, dim], transposed to [dim, k_h]
-    // Result for each hi: [b, q_w, k_h]
-    let mut rel_h_slices: Vec<Tensor<B, 4>> = Vec::with_capacity(q_h);
-    for hi in 0..q_h {
-        let r_q_slice: Tensor<B, 3> = r_q.clone().narrow(1, hi, 1).squeeze::<3>(); // [b, q_w, dim]
-        let rh_slice: Tensor<B, 2> = rh.clone().narrow(0, hi, 1).squeeze::<2>(); // [k_h, dim]
-        let rh_slice_t: Tensor<B, 2> = rh_slice.transpose(); // [dim, k_h]
-                                                             // Broadcast rh_slice_t to match batch dimension: repeat for each batch
-        let rh_slice_broadcast = rh_slice_t.clone().unsqueeze().repeat_dim(0, b); // [b, dim, k_h]
-        let result: Tensor<B, 3> = r_q_slice.matmul(rh_slice_broadcast); // [b, q_w, k_h]
-                                                                         // Reshape to [b, 1, q_w, k_h] for concatenation along dimension 1
-        let result_reshaped: Tensor<B, 4> = result.reshape([b, 1, q_w, k_h]);
-        rel_h_slices.push(result_reshaped);
-    }
-    let rel_h: Tensor<B, 4> = Tensor::cat(rel_h_slices, 1); // [b, q_h, q_w, k_h]
+    // einsum "bhwc,hkc->bhwk": rel_h[b,h,w,k] = sum_c r_q[b,h,w,c] * Rh[h,k,c]
+    // Use broadcasting: r_q [B, q_h, q_w, 1, dim] * Rh [1, q_h, 1, k_h, dim] -> sum over dim
+    let r_q_expanded: Tensor<B, 5> = r_q.clone().unsqueeze_dim(3); // [B, q_h, q_w, 1, dim]
+    let rh_dims = rh.dims();
+    let rh_expanded: Tensor<B, 5> = rh.reshape([1, rh_dims[0], 1, rh_dims[1], rh_dims[2]]); // [1, q_h, 1, k_h, dim]
+    let rel_h: Tensor<B, 4> = (r_q_expanded.clone() * rh_expanded).sum_dims_squeeze(&[4]); // [B, q_h, q_w, k_h]
 
-    // Replace einsum "bhwc,wkc->bhwk" with equivalent operations
-    // For each query width wi, compute: r_q[:, :, wi, :] @ rw[wi, :, :].T
-    // r_q[:, :, wi, :] has shape [b, q_h, dim]
-    // rw[wi, :, :] has shape [k_w, dim], transposed to [dim, k_w]
-    // Result for each wi: [b, q_h, k_w]
-    let mut rel_w_slices: Vec<Tensor<B, 4>> = Vec::with_capacity(q_w);
-    for wi in 0..q_w {
-        let r_q_slice: Tensor<B, 3> = r_q.clone().narrow(2, wi, 1).squeeze::<3>(); // [b, q_h, dim]
-        let rw_slice: Tensor<B, 2> = rw.clone().narrow(0, wi, 1).squeeze::<2>(); // [k_w, dim]
-        let rw_slice_t: Tensor<B, 2> = rw_slice.transpose(); // [dim, k_w]
-                                                             // Broadcast rw_slice_t to match batch dimension: repeat for each batch
-        let rw_slice_broadcast = rw_slice_t.clone().unsqueeze().repeat_dim(0, b); // [b, dim, k_w]
-        let result: Tensor<B, 3> = r_q_slice.matmul(rw_slice_broadcast); // [b, q_h, k_w]
-                                                                         // Reshape to [b, q_h, 1, k_w] for concatenation along dimension 2
-        let result_reshaped: Tensor<B, 4> = result.reshape([b, q_h, 1, k_w]);
-        rel_w_slices.push(result_reshaped);
-    }
-    let rel_w: Tensor<B, 4> = Tensor::cat(rel_w_slices, 2); // [b, q_h, q_w, k_w]
+    // einsum "bhwc,wkc->bhwk": rel_w[b,h,w,k] = sum_c r_q[b,h,w,c] * Rw[w,k,c]
+    // Use broadcasting: r_q [B, q_h, q_w, 1, dim] * Rw [1, 1, q_w, k_w, dim] -> sum over dim
+    let rw_dims = rw.dims();
+    let rw_expanded: Tensor<B, 5> = rw.reshape([1, 1, rw_dims[0], rw_dims[1], rw_dims[2]]); // [1, 1, q_w, k_w, dim]
+    let rel_w: Tensor<B, 4> = (r_q_expanded * rw_expanded).sum_dims_squeeze(&[4]); // [B, q_h, q_w, k_w]
 
     // rel_h: [b, q_h, q_w, k_h] -> reshape to [b, q_h, q_w, k_h, 1]
     // rel_w: [b, q_h, q_w, k_w] -> reshape to [b, q_h, q_w, 1, k_w]
@@ -206,95 +181,80 @@ fn get_rel_pos<B: Backend>(q_size: usize, k_size: usize, rel_pos: Tensor<B, 2>) 
         let old_size = rel_pos_dims[0];
         let new_size = max_rel_dist;
         let embedding_dim = rel_pos_dims[1];
-        let rel_pos_data = rel_pos.to_data();
 
-        // Interpolate each embedding dimension independently
         // PyTorch: rel_pos.reshape(1, L, C).permute(0, 2, 1) -> interpolate -> reshape(-1, new_size).permute(1, 0)
-        let mut result = Vec::with_capacity(new_size * embedding_dim);
+        // We need to interpolate each embedding dimension independently
+        // rel_pos: [old_size, embedding_dim] -> [embedding_dim, old_size] for interpolation
+        let rel_pos_t = rel_pos.transpose(); // [embedding_dim, old_size]
 
-        for j in 0..embedding_dim {
-            for i in 0..new_size {
-                // F.interpolate with align_corners=False: pos = (i + 0.5) * scale - 0.5
-                let scale = old_size as f32 / new_size as f32;
-                let pos = ((i as f32 + 0.5) * scale - 0.5).max(0.0);
-                let idx0 = pos.floor() as usize;
-                let idx1 = (idx0 + 1).min(old_size - 1);
-                let weight = pos - idx0 as f32;
+        // Create interpolation indices using tensor operations
+        // For align_corners=False: pos = (i + 0.5) * scale - 0.5
+        let scale = old_size as f32 / new_size as f32;
+        let indices: Tensor<B, 1> = Tensor::arange(0..new_size as i64, &device)
+            .float()
+            .add_scalar(0.5)
+            .mul_scalar(scale)
+            .sub_scalar(0.5)
+            .clamp_min(0.0);
 
-                let val0 =
-                    rel_pos_data.as_slice::<B::FloatElem>().unwrap()[idx0 * embedding_dim + j];
-                let val1 =
-                    rel_pos_data.as_slice::<B::FloatElem>().unwrap()[idx1 * embedding_dim + j];
-                let interp_val = val0.elem::<f32>() * (1.0 - weight) + val1.elem::<f32>() * weight;
-                result.push(B::FloatElem::from_elem(interp_val));
-            }
-        }
+        // Get floor and ceil indices
+        let indices_floor = indices.clone().floor();
+        let indices_ceil = indices.clone().ceil().clamp_max((old_size - 1) as f32);
+        let weights = indices - indices_floor.clone();
 
-        // Transpose from [embedding_dim, new_size] to [new_size, embedding_dim]
-        let mut transposed = Vec::with_capacity(new_size * embedding_dim);
-        for i in 0..new_size {
-            for j in 0..embedding_dim {
-                transposed.push(result[j * new_size + i]);
-            }
-        }
+        // Convert to integer indices for gathering
+        let indices_floor_int: Tensor<B, 1, burn::tensor::Int> = indices_floor.round().int();
+        let indices_ceil_int: Tensor<B, 1, burn::tensor::Int> = indices_ceil.round().int();
 
-        Tensor::from_data(
-            TensorData::new(transposed, [new_size, embedding_dim]),
-            &device,
-        )
+        // Gather values at floor and ceil indices for each embedding dimension
+        // rel_pos_t: [embedding_dim, old_size]
+        let values_floor = rel_pos_t.clone().select(1, indices_floor_int); // [embedding_dim, new_size]
+        let values_ceil = rel_pos_t.clone().select(1, indices_ceil_int); // [embedding_dim, new_size]
+
+        // Linear interpolation: val0 * (1 - weight) + val1 * weight
+        let weights_expanded = weights.unsqueeze().repeat_dim(0, embedding_dim); // [embedding_dim, new_size]
+        let ones_minus_weights = weights_expanded.clone().neg().add_scalar(1.0);
+        let interpolated = values_floor * ones_minus_weights + values_ceil * weights_expanded;
+
+        // Transpose back to [new_size, embedding_dim]
+        interpolated.transpose()
     } else {
         rel_pos
     };
 
-    // Calculate relative coordinates
-    // q_coords should be [test_add_decomposed_rel_posq_size, 1], k_coords should be [1, k_size]
+    // Calculate relative coordinates using tensor operations
     let q_coords: Tensor<B, 2> = Tensor::arange(0..q_size as i64, &device)
         .float()
-        .reshape([q_size, 1]) // [q_size] -> [q_size, 1]
+        .reshape([q_size, 1])
         .mul_scalar((k_size as f32 / q_size as f32).max(1.0));
 
     let k_coords: Tensor<B, 2> = Tensor::arange(0..k_size as i64, &device)
         .float()
-        .reshape([1, k_size]) // [k_size] -> [1, k_size]
+        .reshape([1, k_size])
         .mul_scalar((q_size as f32 / k_size as f32).max(1.0));
 
-    // Manually broadcast to [q_size, k_size] before subtraction
-    let q_coords_broadcast = q_coords.repeat_dim(1, k_size); // [q_size, 1] -> [q_size, k_size]
-    let k_coords_broadcast = k_coords.repeat_dim(0, q_size); // [1, k_size] -> [q_size, k_size]
-
-    let relative_coords = (q_coords_broadcast - k_coords_broadcast)
+    let relative_coords = (q_coords.repeat_dim(1, k_size) - k_coords.repeat_dim(0, q_size))
         + (k_size as f32 - 1.) * (q_size as f32 / k_size as f32).max(1.0);
 
-    // Manual gathering since advanced indexing is not available
-    let relative_coords_data = relative_coords.to_data();
-    let rel_pos_resized_data = rel_pos_resized.to_data();
+    // Use select to gather rows from rel_pos_resized
+    // relative_coords: [q_size, k_size], rel_pos_resized: [max_rel_dist, embedding_dim]
+    // We need to gather for each position in relative_coords
     let embedding_dim = rel_pos_resized.dims()[1];
 
-    let mut result = Vec::with_capacity(q_size * k_size * embedding_dim);
-    // Iterate in the correct order for shape [q_size, k_size, embedding_dim]
-    // The flattened index for [i, j, k] is: i * (k_size * embedding_dim) + j * embedding_dim + k
-    for i in 0..q_size {
-        for j in 0..k_size {
-            // Access element [i, j] from the 2D tensor
-            let coord_idx = i * k_size + j;
-            let idx = relative_coords_data.as_slice::<B::FloatElem>().unwrap()[coord_idx]
-                .elem::<f32>()
-                .round() as usize;
-            let idx = idx.min(max_rel_dist - 1);
+    // Flatten relative_coords and clamp indices
+    let relative_coords_flat = relative_coords
+        .reshape([q_size * k_size])
+        .round()
+        .clamp(0.0, (max_rel_dist - 1) as f32);
 
-            // Gather all embedding dimensions for this [i, j] position
-            for k in 0..embedding_dim {
-                let val = rel_pos_resized_data.as_slice::<B::FloatElem>().unwrap()
-                    [idx * embedding_dim + k];
-                result.push(val);
-            }
-        }
-    }
+    // Convert to integer indices
+    let indices: Tensor<B, 1, burn::tensor::Int> = relative_coords_flat.int();
 
-    Tensor::from_data(
-        TensorData::new(result, [q_size, k_size, embedding_dim]),
-        &device,
-    )
+    // Gather rows from rel_pos_resized using select
+    let gathered = rel_pos_resized.select(0, indices); // [q_size * k_size, embedding_dim]
+
+    // Reshape to [q_size, k_size, embedding_dim]
+    gathered.reshape([q_size, k_size, embedding_dim])
 }
 
 #[cfg(test)]

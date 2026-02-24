@@ -22,7 +22,7 @@
           env = {
             LIBCLANG_PATH = "${pkgs.clang.cc.lib}/lib";
             PKG_CONFIG_PATH = "${pkgs.openssl.dev}/lib/pkgconfig";
-            LD_LIBRARY_PATH = "${pkgs.glibc}/lib:${pkgs.clang.cc.lib}/lib:${pkgs.stdenv.cc.cc.lib}/lib:${pkgs.openssl.out}/lib:${pythonEnv}/lib";
+            LD_LIBRARY_PATH = "${pkgs.clang.cc.lib}/lib:${pkgs.stdenv.cc.cc.lib}/lib:${pkgs.openssl.out}/lib:${pythonEnv}/lib";
             SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
             PYTHONPATH = "${pythonEnv}/${pkgs.python313.sitePackages}";
           };
@@ -48,7 +48,6 @@
             pythonEnv
             pkgs.busybox
             pkgs.git
-            pkgs.glibc
           ];
           greet = ''
             echo "===================================="
@@ -89,6 +88,7 @@
                  pkgs.ripgrep
                  pkgs.git
                  pkgs.opencode
+                 pkgs.glibc
                  pkgs.coreutils
                  pkgs.busybox
                 (pkgs.runCommand "lib64-symlink" {} ''
@@ -99,6 +99,7 @@
                   #!${pkgs.bashInteractive}/bin/bash
                   ${envSetup}
                   export PYTHONPATH="/workspace/segment-anything:/workspace/mobile-sam:$PYTHONPATH"
+                  export LD_LIBRARY_PATH="${pkgs.glibc}/lib:$LD_LIBRARY_PATH"
                   alias grep=rg
                   ${greet}
                   exec ${pkgs.bashInteractive}/bin/bash
